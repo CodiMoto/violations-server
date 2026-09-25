@@ -308,8 +308,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if self.headers.get("X-Clippy-Test") and V.load_config()["mode"] == "live":
                     return self.reply({"ok": False, "error": "Refused: this is a test and the app is LIVE."}, 409)
                 form = self.read_multipart()
-                photo = form["photos"][0]["data"] if form["photos"] else None
-                st = inbox.submit_violation(user, form, photo, _park(form.get("property_id")))
+                st = inbox.submit_violation(user, form, [p["data"] for p in form["photos"]],
+                                            _park(form.get("property_id")))
                 return self.reply({"ok": True, "status": st})
             if url.path.startswith("/api/violations/") and url.path.endswith("/fixed"):
                 hid = int(url.path.split("/")[3])

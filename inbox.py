@@ -72,7 +72,7 @@ def status(cid, user):
 
 # ---- a violation --------------------------------------------------------------
 
-def submit_violation(user, form, photo, park):
+def submit_violation(user, form, photos, park):
     """Check it, keep it, answer at once; Rent Manager and printing follow in
     the background. A copy already received is not issued again."""
     cid = _check_cid(form.get("cid"))
@@ -80,11 +80,17 @@ def submit_violation(user, form, photo, park):
         prev = _all().get(cid)
         if prev and prev.get("state") in ("working", "done"):
             return status(cid, user)
-        if not photo:
+        if isinstance(photos, (bytes, bytearray)):
+            photos = [photos]
+        photos = [p for p in photos or [] if p]
+        if not photos:
             raise ValueError("No photo came through — try again.")
+        # marks: one list of strokes per photo (older phones sent "strokes" for a single photo)
+        marks = form.get("marks") or [form.get("strokes") or []]
         d = drafts.create(user)
-        drafts.add_photo(d["id"], photo)
-        drafts.set_marks(d["id"], form.get("strokes") or [])
+        for n, data in enumerate(photos[:drafts.MAX_PHOTOS]):
+            drafts.add_photo(d["id"], data, n)
+            drafts.set_marks(d["id"], marks[n] if n < len(marks) else [], n)
         drafts.set_lot(d["id"], park, form["unit_id"], form.get("tenant_id"))
         _, f = drafts.to_form(d["id"], form.get("items"), form.get("others"), form.get("notes"),
                               form.get("warning"))

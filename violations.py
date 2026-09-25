@@ -364,13 +364,20 @@ def render_pdf(v, cfg=None, with_photos=True):
     pdf.set_x(L); pdf.set_font("Helvetica", "", 9); pdf.cell(0, 6, "help@twinpeaksmanagement.com")
     pdf.set_font("Helvetica", "", 7)
     pdf.set_xy(L, pdf.h - 12)
-    pdf.cell(0, 4, f"Ref {v['ref']}" + (f" · {len(v['photos'])} photo(s) on the following page(s)"
+    shots = len({p.get("n", 0) for p in v["photos"]})
+    pdf.cell(0, 4, f"Ref {v['ref']}" + (f" · {shots} photo(s) on the following page(s)"
                                          if with_photos and v["photos"] else ""))
 
     if with_photos:
         # The circled copy goes on the notice; the untouched original is
         # attached to the Rent Manager note but not printed twice.
-        pics = [p for p in v["photos"] if p.get("kind") != "original"] or v["photos"]
+        # (Several photos: each once — its circled copy, or the photo itself if it has none.)
+        by_n = {}
+        for p in v["photos"]:
+            n = p.get("n", 0)
+            if n not in by_n or p.get("kind") == "marked":
+                by_n[n] = p
+        pics = [by_n[n] for n in sorted(by_n)]
         for i in range(0, len(pics), 2):
             pdf.add_page()
             pdf.set_font("Helvetica", "B", 11)
@@ -457,8 +464,10 @@ def issue(conn, v, progress=None):
                                   [{"File": {"MetaTag": f"f{k + 1}"}} for k in range(len(v["photos"]))]}
     files = {"f0": (f"Violation notice {v['park']} lot {v['lot']} {v['issued']:%Y-%m-%d}.pdf",
                     pdf, "application/pdf")}
+    several = len({ph.get("n", 0) for ph in v["photos"]}) > 1
     for k, ph in enumerate(v["photos"]):
-        label = {"marked": "photo (circled)", "original": "photo (original)"}.get(
+        num = f" {ph.get('n', 0) + 1}" if several else ""
+        label = {"marked": f"photo{num} (circled)", "original": f"photo{num} (original)"}.get(
             ph.get("kind"), f"photo {k + 1}")
         files[f"f{k + 1}"] = (f"{v['park']} lot {v['lot']} violation {label}.jpg",
                               ph["jpeg"], "image/jpeg")

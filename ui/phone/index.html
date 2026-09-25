@@ -65,14 +65,19 @@
 
 <!-- step 2: circle the issue -->
 <main id="s-circle" class="screen" hidden>
-  <p class="hint center">Draw a circle around the problem.</p>
+  <p class="hint center" id="circleHint">Draw a circle around the problem.</p>
+  <div class="shots" id="shots" hidden></div>
   <div class="canvaswrap fill" id="canvasWrap"><canvas id="canvas"></canvas></div>
   <div class="row">
     <button class="btn grow" id="undoBtn">Undo</button>
-    <button class="btn grow" id="clearBtn">Start over</button>
-    <button class="btn grow" id="retakeBtn">New photo</button>
+    <button class="btn grow" id="clearBtn">Clear</button>
+    <button class="btn grow" id="retakeBtn">Retake</button>
+    <button class="btn grow" id="dropShot" hidden>Delete</button>
   </div>
-  <button class="btn primary big full" id="circleNext" disabled>Next</button>
+  <div class="row">
+    <button class="btn big grow" id="addShot">＋ Photo</button>
+    <button class="btn primary big grow" id="circleNext" disabled>Next</button>
+  </div>
 </main>
 
 <!-- step 3: lot, on a keypad -->

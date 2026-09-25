@@ -87,32 +87,41 @@ def tidy():
             shutil.rmtree(p, ignore_errors=True)
 
 
-def photo_path(did, kind="original"):
-    return os.path.join(_dir(did), f"{kind}.jpg")
+MAX_PHOTOS = 6          # per violation (Codi, 2026-09-25: several photos of one lot)
+
+
+def photo_path(did, kind="original", n=0):
+    return os.path.join(_dir(did), f"{kind}.jpg" if not n else f"{kind}-{n + 1}.jpg")
 
 
 # ---- step 1: the photo --------------------------------------------------------
 
-def add_photo(did, data):
+def add_photo(did, data, n=0):
     """Keep the photo (shrunk, upright). The lot is always picked by a person:
     Codi, 2026-09-24 — AI may help design and build this program but must not
     run any part of it, so there is no machine reading of lot numbers."""
+    if not 0 <= n < MAX_PHOTOS:
+        raise ValueError(f"Up to {MAX_PHOTOS} photos per violation.")
     d = load(did)
     jpeg = V.shrink_photo(data, long_edge=2000)
-    with open(photo_path(did), "wb") as f:
+    with open(photo_path(did, "original", n), "wb") as f:
         f.write(jpeg)
-    d.update(photo=True, marks=None, stage="circle")
+    d.update(photo=True, photos=max(d.get("photos") or 0, n + 1), marks=None, stage="circle")
     return save(d)
 
 
 # ---- step 2: circle the problem ---------------------------------------------
 
-def set_marks(did, strokes):
-    """`strokes` = lists of [x, y] points, 0..1 across/down the photo.
-    Drawn onto a copy in red; the untouched original is kept too."""
+def set_marks(did, strokes, n=0):
+    """`strokes` = lists of [x, y] points, 0..1 across/down photo n.
+    Drawn onto a copy in red; the untouched original is kept too. A photo
+    with no marks (an extra, wider shot) gets no circled copy."""
     from PIL import Image, ImageDraw
     d = load(did)
-    im = Image.open(photo_path(did)).convert("RGB")
+    if not strokes:
+        d.update(stage="lot")
+        return save(d)
+    im = Image.open(photo_path(did, "original", n)).convert("RGB")
     draw = ImageDraw.Draw(im)
     width = max(6, int(max(im.size) / 150))
     clean = []
@@ -128,7 +137,7 @@ def set_marks(did, strokes):
             draw.ellipse([x - r, y - r, x + r, y + r], fill=(230, 30, 40))
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=88)
-    with open(photo_path(did, "marked"), "wb") as f:
+    with open(photo_path(did, "marked", n), "wb") as f:
         f.write(buf.getvalue())
     d.update(marks=clean, stage="lot")
     return save(d)
@@ -159,11 +168,12 @@ def to_form(did, items, others, notes, warning):
     if not d.get("photo") or not d.get("lot"):
         raise ValueError("The photo or lot is missing — go back a step.")
     photos = []
-    for kind in ("marked", "original"):
-        p = photo_path(did, kind)
-        if os.path.exists(p):
-            with open(p, "rb") as f:
-                photos.append({"name": f"{kind}.jpg", "data": f.read(), "kind": kind})
+    for n in range(d.get("photos") or 1):
+        for kind in ("marked", "original"):
+            p = photo_path(did, kind, n)
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    photos.append({"name": os.path.basename(p), "data": f.read(), "kind": kind, "n": n})
     return d, {"property_id": d["lot"]["property_id"], "unit_id": d["lot"]["unit_id"],
                "tenant_id": d["lot"]["tenant_id"], "items": items or [], "others": others or [],
                "notes": notes or "", "warning": warning, "photos": photos}

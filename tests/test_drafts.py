@@ -49,6 +49,39 @@ class Steps(unittest.TestCase):
         drafts.mark_issued(d["id"], "V-x")
         self.assertIsNone(drafts.open_draft(self.user))                    # finished → not resumable
 
+    def test_several_photos_each_with_its_own_circle(self):
+        d = drafts.create(self.user)
+        drafts.add_photo(d["id"], self.photo(), 0)
+        drafts.set_marks(d["id"], [[[0.2, 0.2], [0.5, 0.2], [0.5, 0.5]]], 0)
+        drafts.add_photo(d["id"], self.photo(), 1)
+        drafts.set_marks(d["id"], [], 1)                                     # a wider shot, not circled
+        drafts.add_photo(d["id"], self.photo(), 2)
+        drafts.set_marks(d["id"], [[[0.1, 0.1], [0.3, 0.1], [0.3, 0.3]]], 2)
+        drafts.set_lot(d["id"], PARK, 1)
+        _, form = drafts.to_form(d["id"], ["debris"], [], "", "1")
+        self.assertEqual([(p["n"], p["kind"]) for p in form["photos"]],
+                         [(0, "marked"), (0, "original"), (1, "original"), (2, "marked"), (2, "original")])
+        with self.assertRaises(ValueError):
+            drafts.add_photo(d["id"], self.photo(), drafts.MAX_PHOTOS)
+
+    def test_notice_prints_each_photo_once(self):
+        import re
+        from datetime import date
+
+        def jpeg(colour):
+            buf = io.BytesIO()
+            Image.new("RGB", (800, 600), colour).save(buf, "JPEG")
+            return buf.getvalue()
+        v = {"ref": "V-1", "issued": date(2026, 9, 25), "park": "Morristown", "park_phone": "", "lot": "20",
+             "tenant_name": "A Resident", "item_ids": [], "item_labels": ["Debris"], "others": [], "notes": "",
+             "warning": "1", "correct_by": date(2026, 9, 29), "issued_by": "Codi",
+             "photos": [{"n": 0, "kind": "marked", "jpeg": jpeg((200, 0, 0))},
+                        {"n": 0, "kind": "original", "jpeg": jpeg((0, 200, 0))},
+                        {"n": 1, "kind": "original", "jpeg": jpeg((0, 0, 200))}]}
+        pdf = V.render_pdf(v, V.load_config())
+        # photo 1 circled + photo 2 as it is; photo 1's untouched original isn't printed twice
+        self.assertEqual(len(re.findall(rb"/Subtype\s*/Image", pdf)), 2)
+
     def test_bad_ids_rejected(self):
         for bad in ("..", "d123", "../secret", "dZZZZZZZZZZZZ"):
             with self.assertRaises(ValueError):

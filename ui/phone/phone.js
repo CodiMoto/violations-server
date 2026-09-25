@@ -83,8 +83,24 @@ const store = {
     return this.mem;
   },
 };
-async function pack(v) { return v && v.photo instanceof Blob ? {...v, photo: {buf: await v.photo.arrayBuffer(), type: v.photo.type}} : v; }
-function unpack(v) { return v && v.photo && v.photo.buf ? {...v, photo: new Blob([v.photo.buf], {type: v.photo.type})} : v; }
+const toBytes = async (b) => b instanceof Blob ? {buf: await b.arrayBuffer(), type: b.type} : b;
+const toBlob = (b) => b && b.buf ? new Blob([b.buf], {type: b.type}) : b;
+async function pack(v) {
+  if (!v) return v;
+  const out = {...v};
+  if (v.photo instanceof Blob) out.photo = await toBytes(v.photo);
+  if (v.photos) out.photos = await Promise.all(v.photos.map(async (p) => ({...p, photo: await toBytes(p.photo)})));
+  return out;
+}
+function unpack(v) {
+  if (!v) return v;
+  const out = {...v};
+  if (v.photo && v.photo.buf) out.photo = toBlob(v.photo);
+  if (v.photos) out.photos = v.photos.map((p) => ({...p, photo: toBlob(p.photo)}));
+  // a violation kept by the one-photo version of the app
+  if (out.kind !== "fix" && out.photo && !out.photos) { out.photos = [{photo: out.photo, strokes: out.strokes || []}]; delete out.photo; delete out.strokes; }
+  return out;
+}
 
 const saveCur = () => { if (cur) { cur.updated = Date.now(); store.set("current", cur); } };   // not awaited: never makes anyone wait
 
@@ -231,11 +247,15 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) pump
 async function send(o) {
   o.error = null; o.sending = true; renderOutbox();
   try {
-    if (o.photo && o.photo.size > 900e3) o.photo = await shrink(o.photo);    // e.g. a big photo from the library
+    // e.g. a big photo from the library
+    if (o.photo && o.photo.size > 900e3) o.photo = await shrink(o.photo);
+    for (const p of o.photos || []) if (p.photo.size > 900e3) p.photo = await shrink(p.photo);
     const fd = new FormData();
-    const {photo, state, error, sending, label, created, thumb, steps, result, doneAt, ...form} = o;
+    const {photo, photos, at, state, error, sending, label, created, thumb, steps, result, doneAt, ...form} = o;
+    if (photos) form.marks = photos.map((p) => p.strokes || []);
     fd.append("form", JSON.stringify(form));
     if (photo) fd.append("photo0", photo, "photo.jpg");
+    (photos || []).forEach((p, i) => fd.append(`photo${i}`, p.photo, `photo${i + 1}.jpg`));
     const url = o.kind === "fix" ? `/api/violations/${o.history_id}/fixed` : "/api/issue";
     const r = await fetch(url, {method: "POST", credentials: "same-origin", body: fd});
     let data = {};
@@ -318,7 +338,7 @@ function renderOutbox() {
 // ---- starting, resuming, going back ------------------------------------------
 $("addBtn").onclick = () => {
   if (cur && !confirm("Throw away the violation you were in the middle of, and start a new one?")) return;
-  cur = {cid: newId(), stage: "photo", photo: null, strokes: [], lot: null,
+  cur = {cid: newId(), stage: "photo", photos: [], at: 0, lot: null,
          items: [], others: [], notes: "", warning: null, created: Date.now()};
   saveCur();
   stepPhoto();
@@ -336,12 +356,17 @@ $("backBtn").onclick = () => {
     return stepItems();
   }
   if (current === "s-lot") return stepCircle();
-  if (current === "s-circle") return stepPhoto();
+  if (current === "s-circle") return stepPhoto(cur.at);
+  if (current === "s-photo" && cur?.photos.length) {            // back to the photos already taken
+    cur.at = Math.min(cur.at, cur.photos.length - 1);
+    return stepCircle();
+  }
 };
 
 function resume() {
   const s = cur.stage;
-  if (!cur.photo || s === "photo") return stepPhoto();
+  if (!cur.photos?.length) return stepPhoto();
+  if (s === "photo") return stepPhoto(cur.at);
   if (s === "circle") return stepCircle();
   if (s === "lot" || !cur.lot) return stepLot();
   if (s === "send") return stepSend();
@@ -353,9 +378,17 @@ function resume() {
 // the way back, losing the photo.
 let stream = null;
 
-function stepPhoto() {
-  if (cur) { cur.stage = "photo"; saveCur(); }
-  $("photoMsg").textContent = ""; show("s-photo"); startCamera();
+// Several photos of the same lot (Codi, 2026-09-25), each with its own circle.
+const MAX_PHOTOS = 6;
+
+// at: which photo this is — the next new one, unless retaking one already taken.
+function stepPhoto(at = cur ? cur.photos.length : 0) {
+  if (cur) { cur.at = Math.min(at, cur.photos.length); cur.stage = "photo"; saveCur(); }
+  const n = cur ? cur.photos.length : 0;
+  $("photoMsg").textContent = !n ? "" : cur.at < n ? `Retaking photo ${cur.at + 1}` : `Photo ${cur.at + 1}`;
+  show("s-photo");
+  if (n) $("backBtn").hidden = false;
+  startCamera();
 }
 
 // One camera, used by two screens: the violation photo and the "fixed" photo.
@@ -413,11 +446,11 @@ $("camera").onchange = (e) => { if (e.target.files[0]) usePhoto(e.target.files[0
 $("library").onchange = (e) => { if (e.target.files[0]) usePhoto(e.target.files[0]); e.target.value = ""; };
 
 function usePhoto(file) {
-  cur.photo = file; cur.strokes = []; cur.stage = "circle";
+  const at = Math.min(cur.at, cur.photos.length), shot = {photo: file, strokes: []};
+  cur.photos[at] = shot; cur.at = at; cur.stage = "circle";
   stepCircle();
   // made smaller for keeping and sending, meanwhile (the marks are fractions of the photo, so they still fit)
-  const mine = cur;
-  shrink(file).then((small) => { if (cur === mine && cur.photo === file) { cur.photo = small; saveCur(); } });
+  shrink(file).then((small) => { if (shot.photo === file) { shot.photo = small; saveCur(); } });
 }
 
 async function shrink(file, edge = 2000) {
@@ -439,13 +472,35 @@ let strokes = [], img = null, imgUrl = null, drawing = null;
 
 function stepCircle() {
   cur.stage = "circle";
+  cur.at = Math.max(0, Math.min(cur.at, cur.photos.length - 1));
   show("s-circle");
-  strokes = (cur.strokes || []).map((s) => s.slice());
+  const shot = cur.photos[cur.at];
+  strokes = (shot.strokes || []).map((s) => s.slice());
   if (imgUrl) URL.revokeObjectURL(imgUrl);
-  imgUrl = URL.createObjectURL(cur.photo);
+  imgUrl = URL.createObjectURL(shot.photo);
   img = new Image();
   img.onload = () => { sizeCanvas(); redraw(); };
   img.src = imgUrl;
+  renderShots();
+}
+
+// The photos taken so far, when there's more than one: tap one to circle it.
+const shotUrls = new WeakMap();
+const shotUrl = (b) => { if (!shotUrls.has(b)) shotUrls.set(b, URL.createObjectURL(b)); return shotUrls.get(b); };
+function renderShots() {
+  const many = cur.photos.length > 1;
+  $("shots").hidden = !many; $("dropShot").hidden = !many;
+  $("addShot").disabled = cur.photos.length >= MAX_PHOTOS;
+  $("shots").innerHTML = many ? cur.photos.map((p, i) =>
+    `<button class="shot" data-i="${i}" aria-pressed="${i === cur.at}" aria-label="Photo ${i + 1}"><img src="${shotUrl(p.photo)}" alt=""></button>`).join("") : "";
+  for (const b of $("shots").querySelectorAll("[data-i]")) b.onclick = () => {
+    keepStrokes(); cur.at = +b.dataset.i; saveCur(); stepCircle();
+  };
+}
+
+function keepStrokes() {
+  const shot = cur.photos[cur.at];
+  if (shot) shot.strokes = strokes.map((s) => s.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]));
 }
 
 // Never bigger than the screen needs: a phone refuses (draws black) past a size.
@@ -470,7 +525,11 @@ function redraw() {
   const c = $("canvas"), g = c.getContext("2d");
   g.drawImage(img, 0, 0, c.width, c.height);
   drawMarks(g, c.width, c.height, strokes.concat(drawing ? [drawing] : []));
-  $("circleNext").disabled = !strokes.length;
+  // at least one photo circled; the others can be left as they are (e.g. a wider shot)
+  const elsewhere = cur.photos.some((p, i) => i !== cur.at && p.strokes?.length);
+  $("circleNext").disabled = !strokes.length && !elsewhere;
+  $("circleHint").textContent = !strokes.length && elsewhere ? "Circle this one too, or leave it as it is."
+    : "Draw a circle around the problem.";
 }
 
 function pt(e) {
@@ -484,26 +543,37 @@ $("canvas").addEventListener("pointerup", endStroke);
 $("canvas").addEventListener("pointercancel", endStroke);
 $("undoBtn").onclick = () => { strokes.pop(); redraw(); };
 $("clearBtn").onclick = () => { strokes = []; redraw(); };
-$("retakeBtn").onclick = stepPhoto;
+$("retakeBtn").onclick = () => stepPhoto(cur.at);
+$("addShot").onclick = () => { keepStrokes(); saveCur(); stepPhoto(cur.photos.length); };
+$("dropShot").onclick = () => {
+  cur.photos.splice(cur.at, 1);
+  cur.at = Math.max(0, cur.at - 1); saveCur();
+  stepCircle();
+};
 
-// A small copy of the photo with the circle on it, for the next screens.
-let thumbUrl = "";
-function makeThumb() {
+// A small copy of the first circled photo, with its circle, for the next screens.
+async function makeThumb(shot) {
+  const bmp = await createImageBitmap(shot.photo);
   const t = document.createElement("canvas"), side = 112;
-  const r = Math.max(side / img.width, side / img.height);
+  const r = Math.max(side / bmp.width, side / bmp.height);
   t.width = t.height = side;
-  const g = t.getContext("2d"), w = img.width * r, h = img.height * r, x = (side - w) / 2, y = (side - h) / 2;
-  g.drawImage(img, x, y, w, h);
+  const g = t.getContext("2d"), w = bmp.width * r, h = bmp.height * r, x = (side - w) / 2, y = (side - h) / 2;
+  g.drawImage(bmp, x, y, w, h);
+  bmp.close?.();
   g.translate(x, y);
-  drawMarks(g, w, h, strokes);
-  thumbUrl = t.toDataURL("image/jpeg", 0.8);
+  drawMarks(g, w, h, shot.strokes || []);
+  return t.toDataURL("image/jpeg", 0.8);
 }
+const photoCount = () => cur.photos.length > 1 ? ` · ${cur.photos.length} photos` : "";
 
 $("circleNext").onclick = () => {
-  cur.strokes = strokes.map((s) => s.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]));
-  makeThumb();
-  cur.thumb = thumbUrl;
+  keepStrokes();
   cur.stage = "lot"; saveCur();
+  const mine = cur;
+  makeThumb(cur.photos.find((p) => p.strokes?.length) || cur.photos[0]).then((t) => {
+    mine.thumb = t; saveCur();
+    for (const im of document.querySelectorAll("#itemsWho .thumb, #sendSummary .thumb")) im.src = t;
+  }).catch(() => {});
   stepLot();
 };
 
@@ -581,7 +651,7 @@ function stepItems() {
   show("s-items");
   const L = cur.lot, picked = new Set(cur.items);
   $("itemsWho").innerHTML = `<img class="thumb" src="${cur.thumb || ""}" alt="">
-    <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}</div>`;
+    <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}<span class="muted">${photoCount()}</span></div>`;
   $("tiles").innerHTML = me.items.map((it) =>
     `<button class="tile" data-id="${it.id}" aria-pressed="${picked.has(it.id)}">${esc(it.short || it.label)}</button>`).join("") +
     `<button class="tile other" id="otherTile" aria-pressed="${cur.others.length > 0}">${cur.others.length ? esc(cur.others.join(", ")) : "Something else…"}</button>`;
@@ -620,7 +690,7 @@ async function stepSend() {
   const L = cur.lot, mine = cur;
   const labels = me.items.filter((it) => cur.items.includes(it.id)).map((it) => it.short || it.label).concat(cur.others);
   $("sendSummary").innerHTML = `<img class="thumb" src="${cur.thumb || ""}" alt="">
-    <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}<div class="what">${esc(labels.join(" · "))}</div></div>`;
+    <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}<span class="muted">${photoCount()}</span><div class="what">${esc(labels.join(" · "))}</div></div>`;
   $("levels").innerHTML = me.levels.map((l) => `<button type="button" data-l="${esc(l)}">${esc(l)}</button>`).join("");
   for (const b of $("levels").querySelectorAll("button")) b.onclick = () => { cur.warning = b.dataset.l; saveCur(); setLevel(); refresh(); };
   $("notes").value = cur.notes || "";

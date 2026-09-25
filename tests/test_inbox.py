@@ -22,9 +22,13 @@ class Inbox(unittest.TestCase):
         self.built, self.issued = [], []
         release = self.release = threading.Event()
 
+        calls = self.calls = []
+
         class Drafts:
+            MAX_PHOTOS = 6
             create = staticmethod(lambda user: {"id": "d000000000001"})
-            add_photo = set_marks = staticmethod(lambda *a: None)
+            add_photo = staticmethod(lambda did, data, n=0: calls.append(("photo", n, data)))
+            set_marks = staticmethod(lambda did, strokes, n=0: calls.append(("marks", n, len(strokes))))
             set_lot = staticmethod(lambda *a: None)
             to_form = staticmethod(lambda *a: (None, {}))
             mark_issued = staticmethod(lambda *a: None)
@@ -66,6 +70,12 @@ class Inbox(unittest.TestCase):
         self.assertEqual(st["state"], "done")
         self.assertEqual(st["result"]["pdf"], "/api/letters/V-20260925-101500.pdf")
         self.assertEqual(st["steps"], ["Saved to Rent Manager"])
+
+    def test_several_photos_each_with_its_own_circle(self):
+        form = dict(self.form(), marks=[[[[0.1, 0.1], [0.2, 0.2]]], [], [[[0.3, 0.3], [0.4, 0.4]], [[0.5, 0.5], [0.6, 0.6]]]])
+        inbox.submit_violation(USER, form, [b"one", b"two", b"three"], {})
+        self.assertEqual(self.calls, [("photo", 0, b"one"), ("marks", 0, 1), ("photo", 1, b"two"), ("marks", 1, 0),
+                                      ("photo", 2, b"three"), ("marks", 2, 2)])
 
     def test_sent_twice_is_issued_once(self):
         inbox.submit_violation(USER, self.form(), b"jpeg", {})
