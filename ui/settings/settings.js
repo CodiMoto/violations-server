@@ -65,7 +65,7 @@ let updTimer = null;
 
 function renderUpdates(u) {
   if (u.dev_copy) {
-    $("upd").innerHTML = `<p class="hint">This is Codi's development copy — it's where new versions come from, so it doesn't update itself.</p>`;
+    $("upd").innerHTML = `<p class="hint">This is Codi's development copy${u.version ? ` (version <b>${esc(u.version)}</b>)` : ""} — it's where new versions come from, so it doesn't update itself.</p>`;
     $("updNow").hidden = true; return;
   }
   const ver = u.version ? `Version <b>${esc(u.version)}</b>, put in ${esc(fmtWhen(u.installed_at))}.` : "Version: as installed.";

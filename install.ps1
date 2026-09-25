@@ -27,8 +27,10 @@ function Restart-Server {
     # The task runs venv\Scripts\pythonw.exe, which starts the real Python as a
     # child process - so end the task AND whatever is holding the phone port.
     Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+    # (Stop-Process, not taskkill: under 'Stop', taskkill's "not found" when the task
+    # already ended it aborted this script and left the server off.)
     Get-NetTCPConnection -LocalPort 8790 -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-        taskkill /F /T /PID $_.OwningProcess 2>$null | Out-Null }
+        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
     Start-Sleep 2
     Start-ScheduledTask -TaskName $task
     Start-Sleep 4

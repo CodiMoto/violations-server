@@ -69,6 +69,34 @@ def status():
         return {}
 
 
+def current_version():
+    """Which version this computer is running: {"version": short id or None,
+    "installed_at": iso or None, "dev": bool}. Shown on the phone app and in
+    Violations Settings so Codi can see at a glance which parks are up to date.
+    None = installed from a ZIP and not updated since (it will be within the hour)."""
+    git = os.path.join(HERE, ".git")
+    if os.path.isdir(git):                     # Codi's development copy
+        try:
+            with open(os.path.join(git, "HEAD"), encoding="utf-8") as f:
+                head = f.read().strip()
+            sha = head
+            if head.startswith("ref: "):
+                ref = head[5:]
+                path = os.path.join(git, *ref.split("/"))
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        sha = f.read().strip()
+                else:
+                    with open(os.path.join(git, "packed-refs"), encoding="utf-8") as f:
+                        sha = next(line.split()[0] for line in f if line.rstrip().endswith(" " + ref))
+            return {"version": sha[:7], "installed_at": None, "dev": True}
+        except (OSError, StopIteration):
+            return {"version": None, "installed_at": None, "dev": True}
+    st = status()
+    return {"version": (st.get("installed") or "")[:7] or None, "installed_at": st.get("installed_at"),
+            "dev": False}
+
+
 def _save(**changes):
     st = status() | changes
     os.makedirs(DATA, exist_ok=True)

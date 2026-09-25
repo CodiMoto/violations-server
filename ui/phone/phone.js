@@ -43,7 +43,16 @@ async function api(path, opts = {}) {
 }
 
 // ---- sign in -----------------------------------------------------------------
-function toSignin() { show("signin"); $("foot").hidden = true; $("who").textContent = ""; }
+function toSignin() {
+  show("signin"); $("foot").hidden = true; $("who").textContent = "";
+  fetch("/api/version").then((r) => r.json()).then((v) => { $("signinVer").textContent = verText(v); }).catch(() => {});
+}
+// Which version this park's computer runs — so Codi can see at a glance which parks are up to date.
+function verText(v) {
+  if (!v || !v.version) return v && v.dev ? "Development copy" : "Version: as installed (updates within the hour)";
+  const when = v.installed_at ? " · updated " + new Date(v.installed_at).toLocaleDateString([], {month: "short", day: "numeric"}) : "";
+  return `${v.dev ? "Development copy" : "Version"} ${v.version}${when}`;
+}
 $("signinForm").onsubmit = async (e) => {
   e.preventDefault();
   $("signinErr").textContent = "";
@@ -61,6 +70,7 @@ async function start() {
   $("who").textContent = me.name;
   $("testBanner").hidden = me.mode === "live";
   $("foot").hidden = false;
+  $("footVer").textContent = verText(me.version);
   home();
 }
 

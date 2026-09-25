@@ -106,6 +106,17 @@ class Updater(unittest.TestCase):
         self.assertEqual(self.read("mgrserver.py"), "old")
 
 
+    def test_version_shown_on_the_phone(self):
+        self.assertEqual(U.current_version(), {"version": None, "installed_at": None, "dev": False})
+        U._save(installed="2a878fe79f835aaf", installed_at="2026-09-24T21:00:00")
+        self.assertEqual(U.current_version(), {"version": "2a878fe", "installed_at": "2026-09-24T21:00:00",
+                                               "dev": False})
+        os.makedirs(os.path.join(self.here, ".git", "refs", "heads"))
+        self.write(".git/HEAD", "ref: refs/heads/main\n")
+        self.write(".git/refs/heads/main", "9547db6aaaa\n")
+        self.assertEqual(U.current_version(), {"version": "9547db6", "installed_at": None, "dev": True})
+
+
 class NewSettings(unittest.TestCase):
     def test_new_settings_fill_gaps_but_never_change_a_setting(self):
         mine = {"mode": "live", "printer": "Office", "reminders": {"email": True},

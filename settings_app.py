@@ -163,9 +163,8 @@ class Api:
         return V.print_pdf(V.render_pdf(v, cfg, with_photos=False), printer, "V-TESTPRINT")
 
     def update_status(self):
-        st = updater.status()
-        return {"dev_copy": os.path.isdir(os.path.join(HERE, ".git")),
-                "version": (st.get("installed") or "")[:7] or None, "installed_at": st.get("installed_at"),
+        st, v = updater.status(), updater.current_version()
+        return {"dev_copy": v["dev"], "version": v["version"], "installed_at": v["installed_at"],
                 "last_check": st.get("last_check"), "result": st.get("result"),
                 "problem": bool(st.get("problem")),
                 "checking": os.path.exists(os.path.join(updater.WORK, "running"))}

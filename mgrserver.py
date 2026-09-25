@@ -39,6 +39,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import rmconn  # noqa: E402
+import updater  # noqa: E402
 import violations as V  # noqa: E402
 import drafts  # noqa: E402
 
@@ -211,6 +212,8 @@ class Handler(SimpleHTTPRequestHandler):
             if url.path in ("", "/"):
                 self.path = "/index.html"
             return super().do_GET()
+        if url.path == "/api/version":            # no sign-in: Codi checks any park's version
+            return self.reply({"ok": True, **updater.current_version()})
         _touch_activity()
         user = self.user()
         if not user:
@@ -221,7 +224,8 @@ class Handler(SimpleHTTPRequestHandler):
                 cfg = V.load_config()
                 return self.reply({"ok": True, "name": user["name"], "mode": cfg["mode"],
                                    "items": cfg["items"], "other": cfg["other"],
-                                   "levels": cfg["warning_levels"]})
+                                   "levels": cfg["warning_levels"],
+                                   "version": updater.current_version()})
             if url.path == "/api/home":
                 parks = [p["park"] for p in V.lots(rmconn.Connection("practice"))]
                 active = V.active_violations(rmconn.Connection("practice"), parks)

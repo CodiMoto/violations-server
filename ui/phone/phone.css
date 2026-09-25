@@ -144,3 +144,4 @@ input, textarea { border: 1px solid var(--line); border-radius: 12px; padding: 1
 .parkpick { flex: 0 0 auto; display: flex; gap: 6px; }
 .parkpick button { flex: 1; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-weight: 700; }
 .parkpick button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.ver { font-size: 11px; color: var(--muted); text-align: center; align-self: center; margin: 0; }
