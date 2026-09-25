@@ -17,7 +17,8 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
         ▼
  manager's computer ── mgrserver.py (port 8790, this computer only)
         │                 ├─ violations.py  notice PDF, deadlines, Rent Manager notes
-        │                 ├─ drafts.py      each step saved as it's done
+        │                 ├─ inbox.py       each violation received once, saved in the background
+        │                 ├─ drafts.py      photo + circle + lot put together
         │                 └─ rmconn.py / rmclient.py   Rent Manager API
         ├─ settings_app.py  Violations Settings (127.0.0.1:8791, never exposed)
         └─ print_queue.py → printer (SumatraPDF, silent)
@@ -27,6 +28,12 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
   category *Violation Notice*, with the notice PDF and photos attached. Each
   note carries a `Correct by:` line and a `[Clippy violation V-…]` tag; the
   active list and deadlines are read back from Rent Manager.
+- **Nothing waits while a violation is written.** The phone keeps the whole
+  violation (in the browser's own storage, so a reload loses nothing) and
+  sends it in one upload when it's issued, in the background; the home screen
+  shows each one until it's in Rent Manager, and re-sends by itself after a
+  dropped signal. Each send carries the phone's own id, so a repeat never makes
+  a second note. "It's fixed" works the same way.
 - **No AI runs in this program.** It's plain code: rules, lookups, a form.
 - **Test mode** (the default) writes to a test prospect and never prints.
 - **Always running.** The phone server starts with Windows (no sign-in
@@ -84,7 +91,8 @@ A push to `main` **is** a release to every park. So:
 | `VERSION` | this release's number, shown on the phone and in Settings |
 | `mgrserver.py` | the phone server |
 | `violations.py` | notice, deadlines, Rent Manager notes, reminders |
-| `drafts.py` | the step-by-step violation being written |
+| `inbox.py` | the phone's one-shot sends: received once (phone's own id), Rent Manager in the background |
+| `drafts.py` | puts a received violation's photo, circle and lot together |
 | `settings_app.py` | Violations Settings page |
 | `print_queue.py` | prints queued notices in the signed-in session |
 | `rmconn.py`, `rmclient.py` | Rent Manager API (token re-use, rate limits) |

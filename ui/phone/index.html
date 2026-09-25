@@ -41,6 +41,7 @@
 <main id="home" class="screen" hidden>
   <button class="btn add" id="addBtn">＋ Add a violation</button>
   <div id="resume"></div>
+  <div class="outbox" id="outbox"></div>
   <div class="listhead"><h2>Active <span class="muted" id="parkName"></span></h2>
     <div class="pager" id="pager" hidden><button class="pbtn" id="prevPage" aria-label="Previous">‹</button><span id="pageText"></span><button class="pbtn" id="nextPage" aria-label="Next">›</button></div></div>
   <div class="fill" id="active"><p class="muted">Loading…</p></div>
@@ -143,15 +144,6 @@
     <button class="btn primary grow big" id="fixSave">Save — it's fixed</button>
   </div>
   <p class="err" id="fixErr"></p>
-</main>
-
-<!-- sending / done -->
-<main id="done" class="screen" hidden>
-  <h2 id="doneTitle">Sending…</h2>
-  <ul class="steps" id="steps"></ul>
-  <div id="doneBody"></div>
-  <span class="fill"></span>
-  <button class="btn primary big full" id="homeBtn" hidden>Back to violations</button>
 </main>
 
 <nav class="foot" id="foot" hidden>

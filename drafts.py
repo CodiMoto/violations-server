@@ -1,12 +1,12 @@
-"""A violation being written on the phone, one step at a time.
+"""A violation's photo, circle and lot, put together on the manager computer.
 
-Why drafts live on the server (Codi, 2026-09-24: "if I upload the photo, it
-removes the tenant and vice versa"): on a phone, opening the camera from a web
-page often makes the browser drop and reload the page, which wiped whatever
-had been filled in. So every step — photo, circle, lot, checklist — is saved
-here the moment it's done, and the app picks up where it left off.
+Since 2026-09-25 the phone keeps the whole violation to itself while it is
+being written and sends it once, at the end (inbox.py) — Codi: waiting for a
+save after every step was too slow. inbox.py then runs these steps in one go:
+photo (shrunk, upright) → the circle burnt onto a copy → the lot and resident
+→ the form violations.build() needs. The folder per violation keeps the
+photos the notice and Rent Manager are made from.
 
-Steps: photo → circle the problem → pick the lot → what's wrong → issue.
 No AI runs anywhere in this (Codi's rule, 2026-09-24).
 """
 

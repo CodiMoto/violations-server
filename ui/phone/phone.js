@@ -1,6 +1,12 @@
 // Violations phone app — one step at a time, one screen per step, no scrolling.
-// Every step is saved on the manager computer as soon as it's done
-// (drafts.py), so a reload never loses work. No AI anywhere (Codi's rule).
+//
+// Nothing waits on the manager computer while a violation is being written
+// (Codi, 2026-09-25: "it is a lot of waiting to save and verify everything
+// every action"). The violation stays on this phone — kept in the browser's
+// own storage, so a reload doesn't lose it — and goes to the manager computer
+// in ONE upload at the end, in the background (the outbox), while you carry
+// on. The home screen shows each one until it's in Rent Manager. The same
+// goes for "It's fixed". No AI anywhere (Codi's rule).
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
@@ -9,8 +15,10 @@ const TITLES = {"s-photo": "Photo", "s-circle": "Circle it", "s-lot": "Which lot
                 "s-other": "Something else", "s-send": "Warning & send", "s-fix": "Photo of the fix",
                 "s-fixok": "It's fixed"};
 const lotName = (l) => (l || "").replace(/^0+(?=\d)/, "");
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() :
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(""));
 
-let me = null, draft = null, park = null, parks = [], level = null;
+let me = null, cur = null, park = null, parks = [];
 let autoResume = true;            // only on first load, not after "Throw it away"
 let current = null;
 
@@ -42,6 +50,44 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// ---- the phone's own storage: the violation being written + the outbox -------
+// IndexedDB when the browser allows it; memory otherwise (private browsing).
+// Photos are kept as bytes, which every phone browser can store.
+const store = {
+  mem: new Map(), db: undefined,
+  req: (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }),
+  async open() {
+    if (this.db !== undefined) return this.db;
+    try {
+      const r = indexedDB.open("violations", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("kv");
+      this.db = await this.req(r);
+    } catch { this.db = null; }
+    return this.db;
+  },
+  async os(mode) { const db = await this.open(); return db && db.transaction("kv", mode).objectStore("kv"); },
+  // Writes go one after another, in order, so an older copy can never land on top of a newer one.
+  queue: Promise.resolve(),
+  later(fn) { return (this.queue = this.queue.then(fn).catch(() => {})); },
+  // photo bytes first: a storage transaction closes by itself if anything is awaited after opening it
+  set(k, v) { this.mem.set(k, v); return this.later(async () => { const p = await pack(v), s = await this.os("readwrite"); if (s) await this.req(s.put(p, k)); }); },
+  del(k) { this.mem.delete(k); return this.later(async () => { const s = await this.os("readwrite"); if (s) await this.req(s.delete(k)); }); },
+  async all() {
+    try {
+      const s = await this.os("readonly");
+      if (s) {
+        const [keys, vals] = await Promise.all([this.req(s.getAllKeys()), this.req(s.getAll())]);
+        keys.forEach((k, i) => this.mem.set(k, unpack(vals[i])));
+      }
+    } catch {}
+    return this.mem;
+  },
+};
+async function pack(v) { return v && v.photo instanceof Blob ? {...v, photo: {buf: await v.photo.arrayBuffer(), type: v.photo.type}} : v; }
+function unpack(v) { return v && v.photo && v.photo.buf ? {...v, photo: new Blob([v.photo.buf], {type: v.photo.type})} : v; }
+
+const saveCur = () => { if (cur) { cur.updated = Date.now(); store.set("current", cur); } };   // not awaited: never makes anyone wait
+
 // ---- sign in -----------------------------------------------------------------
 function toSignin() {
   show("signin"); $("foot").hidden = true; $("who").textContent = "";
@@ -71,7 +117,11 @@ async function start() {
   $("testBanner").hidden = me.mode === "live";
   $("foot").hidden = false;
   $("footVer").textContent = verText(me.version);
+  const kept = await store.all();
+  cur = kept.get("current") || null;
+  for (const [k, o] of kept) if (k.startsWith("out:")) outbox.set(o.cid, {...o, sending: false});
   home();
+  pump();
 }
 
 // ---- home: active violations, paged to fit the screen -------------------------
@@ -82,24 +132,30 @@ const fmtDay = (iso) => new Date(iso + "T12:00").toLocaleDateString([], {weekday
 
 async function home() {
   show("home");
-  draft = null;
-  const r = await api("/api/home");
-  if (!r.ok) { $("active").innerHTML = `<p class="err">${esc(r.error)}</p>`; return; }
-  $("parkName").textContent = `· ${r.parks.join(" & ")}`;
   // Back after a reload mid-violation? Go straight into it instead of asking.
-  if (r.draft && autoResume && Date.now() - new Date(r.draft.updated).getTime() < 3600e3) {
+  if (cur && autoResume && Date.now() - cur.updated < 3600e3) {
     autoResume = false;
-    return resume(r.draft);
+    return resume();
   }
   autoResume = false;
-  $("resume").innerHTML = r.draft ? `<div class="card resume"><b>You were in the middle of one.</b>
+  $("resume").innerHTML = cur ? `<div class="card resume"><b>You were in the middle of one.</b>
       <div class="row"><button class="btn primary grow" id="resumeBtn">Carry on</button><button class="btn grow" id="discardBtn">Throw it away</button></div></div>` : "";
-  if (r.draft) {
-    $("resumeBtn").onclick = () => resume(r.draft);
-    $("discardBtn").onclick = async () => { await api(`/api/drafts/${r.draft.id}/cancel`, {json: {}}); home(); };
+  if (cur) {
+    $("resumeBtn").onclick = resume;
+    $("discardBtn").onclick = () => { cur = null; store.del("current"); home(); };
   }
-  active = r.active; page = 0;
+  renderOutbox();
   renderActive();
+  loadParks();                                   // ready for the lot step before it's needed
+  let r;
+  try { r = await api("/api/home"); } catch (e) {
+    if (e.message !== "signin") $("active").innerHTML = `<p class="err">Couldn't reach the manager computer.</p>`;
+    return;
+  }
+  if (!r.ok) { $("active").innerHTML = `<p class="err">${esc(r.error)}</p>`; return; }
+  $("parkName").textContent = `· ${r.parks.join(" & ")}`;
+  active = r.active; page = 0;
+  if (current === "home") renderActive();
 }
 
 function perPage() {
@@ -108,17 +164,20 @@ function perPage() {
 }
 
 function renderActive() {
-  if (!active.length) {
+  // one marked fixed on this phone is off the list at once, even before it's sent
+  const fixing = new Set([...outbox.values()].filter((o) => o.kind === "fix" && o.state !== "failed").map((o) => o.history_id));
+  const shown = active.filter((v) => !fixing.has(v.history_id));
+  if (!shown.length) {
     $("pager").hidden = true;
-    $("active").innerHTML = `<p class="muted center">No active violations.</p>`;
+    $("active").innerHTML = `<p class="muted center">${$("parkName").textContent ? "No active violations." : "Loading…"}</p>`;
     return;
   }
-  const n = perPage(), pages = Math.ceil(active.length / n);
+  const n = perPage(), pages = Math.ceil(shown.length / n);
   page = Math.min(page, pages - 1);
   $("pager").hidden = pages < 2;
-  $("pageText").textContent = `${page * n + 1}–${Math.min(active.length, (page + 1) * n)} of ${active.length}`;
+  $("pageText").textContent = `${page * n + 1}–${Math.min(shown.length, (page + 1) * n)} of ${shown.length}`;
   $("prevPage").disabled = page === 0; $("nextPage").disabled = page >= pages - 1;
-  $("active").innerHTML = active.slice(page * n, (page + 1) * n).map((v) => `
+  $("active").innerHTML = shown.slice(page * n, (page + 1) * n).map((v) => `
     <div class="card vio">
       <div class="vhead"><b>Lot ${esc(v.lot)}</b> <span class="muted name">${esc(v.tenant_name)}</span>
         <span class="due-chip ${dueClass(v.days_left)}">${dueText(v.days_left)}</span></div>
@@ -135,41 +194,169 @@ function renderActive() {
 $("prevPage").onclick = () => { page--; renderActive(); };
 $("nextPage").onclick = () => { page++; renderActive(); };
 
-$("addBtn").onclick = async () => {
-  const r = await api("/api/drafts", {json: {}});
-  if (!r.ok) { alert(r.error); return; }
-  draft = r.draft;
-  toStep();
+async function loadParks() {
+  try { const r = await api("/api/parks"); if (r.ok) parks = r.parks; } catch {}
+}
+
+// ---- the outbox: finished violations and fixes, sent in the background --------
+// States: waiting (not sent yet / no signal) → working (received, going into
+// Rent Manager) → done, or failed. Each carries its own id, so sending twice
+// after a dropped signal never makes a second note.
+const outbox = new Map();
+let pumping = false, pumpTimer = null;
+
+function queue(o) {
+  outbox.set(o.cid, o);
+  store.set(`out:${o.cid}`, o);
+  pump();
+}
+
+async function pump() {
+  if (pumping) return;
+  pumping = true;
+  clearTimeout(pumpTimer);
+  try {
+    for (const o of [...outbox.values()]) if (o.state === "waiting") await send(o);
+    for (const o of [...outbox.values()]) if (o.state === "working") await check(o);
+  } finally { pumping = false; }
+  renderOutbox();
+  const left = [...outbox.values()];
+  if (left.some((o) => o.state === "waiting" || o.state === "working")) {
+    pumpTimer = setTimeout(pump, left.some((o) => o.state === "waiting") ? 15000 : 2000);
+  }
+}
+window.addEventListener("online", pump);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) pump(); });
+
+async function send(o) {
+  o.error = null; o.sending = true; renderOutbox();
+  try {
+    if (o.photo && o.photo.size > 900e3) o.photo = await shrink(o.photo);    // e.g. a big photo from the library
+    const fd = new FormData();
+    const {photo, state, error, sending, label, created, thumb, steps, result, doneAt, ...form} = o;
+    fd.append("form", JSON.stringify(form));
+    if (photo) fd.append("photo0", photo, "photo.jpg");
+    const url = o.kind === "fix" ? `/api/violations/${o.history_id}/fixed` : "/api/issue";
+    const r = await fetch(url, {method: "POST", credentials: "same-origin", body: fd});
+    let data = {};
+    try { data = await r.json(); } catch {}
+    if (r.status === 401) { o.error = "Signed out — sign in again and it will send."; return; }
+    if (!r.ok || !data.ok) { finish(o, "failed", data.error || `The manager computer answered ${r.status}.`); return; }
+    apply(o, data.status);
+  } catch {
+    o.error = "No signal — it will send by itself when there is.";
+  } finally { o.sending = false; }
+}
+
+async function check(o) {
+  try {
+    const r = await fetch(`/api/received/${o.cid}`, {credentials: "same-origin"});
+    if (r.status === 404) { o.state = "waiting"; return; }        // never arrived: send it (again)
+    const data = await r.json();
+    if (data.ok) apply(o, data.status);
+  } catch {}
+}
+
+function apply(o, st) {
+  o.steps = st.steps || [];
+  if (st.state === "done") finish(o, "done", null, st.result);
+  else if (st.state === "failed") finish(o, "failed", st.error);
+  else { o.state = "working"; store.set(`out:${o.cid}`, o); }
+}
+
+function finish(o, state, error, result) {
+  o.state = state; o.error = error; o.result = result || null; o.doneAt = Date.now();
+  if (state === "done") {
+    delete o.photo;
+    if (o.kind === "issue") for (const k in pastViolations) delete pastViolations[k];   // the next suggestion must count it
+    store.del(`out:${o.cid}`);
+    setTimeout(() => { outbox.delete(o.cid); if (current === "home") renderOutbox(); }, 20000);
+    if (current === "home") home();          // the list now has it (or no longer has the fixed one)
+  } else {
+    store.set(`out:${o.cid}`, o);
+  }
+}
+
+function outLine(o) {
+  const who = esc(o.label);
+  if (o.state === "done") {
+    const x = o.result || {};
+    const extra = o.kind === "fix" ? "marked fixed" :
+      x.test ? "done (test)" : `issued${x.printed ? (x.printed.ok ? " · printing" : " · didn't print") : ""}`;
+    return `<div class="ob good"><span>✓ ${who} — ${extra}</span></div>`;
+  }
+  if (o.state === "failed") {
+    return `<div class="ob bad"><span>✗ ${who} didn't save: ${esc(o.error)}</span>
+      <span class="obacts"><button class="link" data-retry="${o.cid}">Try again</button>
+      ${o.kind === "issue" ? `<button class="link" data-edit="${o.cid}">Change it</button>` : ""}
+      <button class="link" data-drop="${o.cid}">Throw away</button></span></div>`;
+  }
+  const what = o.state === "working" ? (o.steps?.length ? esc(o.steps[o.steps.length - 1]) : "saving to Rent Manager…")
+    : o.error ? esc(o.error) : "sending…";
+  return `<div class="ob"><span>${who} — ${what}</span></div>`;
+}
+
+function renderOutbox() {
+  const list = [...outbox.values()].sort((a, b) => a.created - b.created);
+  $("outbox").innerHTML = list.slice(-3).map(outLine).join("");
+  for (const b of $("outbox").querySelectorAll("[data-retry]")) b.onclick = () => {
+    const o = outbox.get(b.dataset.retry); o.state = "waiting"; o.error = null; store.set(`out:${o.cid}`, o); pump();
+  };
+  for (const b of $("outbox").querySelectorAll("[data-drop]")) b.onclick = () => {
+    if (!confirm("Throw this away? It is not in Rent Manager.")) return;
+    outbox.delete(b.dataset.drop); store.del(`out:${b.dataset.drop}`); renderOutbox(); renderActive();
+  };
+  for (const b of $("outbox").querySelectorAll("[data-edit]")) b.onclick = () => {
+    const o = outbox.get(b.dataset.edit);
+    outbox.delete(o.cid); store.del(`out:${o.cid}`);
+    const {state, error, steps, result, doneAt, sending, kind, label, created, ...v} = o;
+    cur = {...v, stage: "send"}; saveCur(); resume();
+  };
+  if (current === "home") renderActive();       // the strip's height changes how many fit
+}
+
+// ---- starting, resuming, going back ------------------------------------------
+$("addBtn").onclick = () => {
+  if (cur && !confirm("Throw away the violation you were in the middle of, and start a new one?")) return;
+  cur = {cid: newId(), stage: "photo", photo: null, strokes: [], lot: null,
+         items: [], others: [], notes: "", warning: null, created: Date.now()};
+  saveCur();
+  stepPhoto();
 };
-$("homeBtn").onclick = home;
-$("cancelBtn").onclick = async () => {
-  if (!confirm("Throw away this violation? Nothing has been saved to Rent Manager yet.")) return;
-  if (draft) await api(`/api/drafts/${draft.id}/cancel`, {json: {}});
+$("cancelBtn").onclick = () => {
+  if (!confirm("Throw away this violation? Nothing has been sent yet.")) return;
+  cur = null; store.del("current");
   home();
 };
-$("backBtn").onclick = async () => {
+$("backBtn").onclick = () => {
   if (current === "s-fix") return home();
   if (current === "s-fixok") return startFix(fixing);
-  if (current === "s-send" || current === "s-other") return stepItems(false);
-  const r = await api(`/api/drafts/${draft.id}/back`, {json: {}});
-  if (r.ok) { draft = r.draft; toStep(); }
+  if (current === "s-send" || current === "s-other" || current === "s-items") {
+    if (current === "s-items") return stepLot();
+    return stepItems();
+  }
+  if (current === "s-lot") return stepCircle();
+  if (current === "s-circle") return stepPhoto();
 };
 
-function resume(d) { draft = d; toStep(); }
-function toStep() {
-  const s = draft.stage;
-  if (s === "photo" || !draft.photo) return stepPhoto();
+function resume() {
+  const s = cur.stage;
+  if (!cur.photo || s === "photo") return stepPhoto();
   if (s === "circle") return stepCircle();
-  if (s === "lot") return stepLot();
-  return stepItems(true);
+  if (s === "lot" || !cur.lot) return stepLot();
+  if (s === "send") return stepSend();
+  return stepItems();
 }
 
 // ---- step 1: photo, with the camera inside the page -----------------------------
 // Handing off to the phone's camera app made the browser reload this page on
-// the way back, losing the photo before it uploaded.
+// the way back, losing the photo.
 let stream = null;
 
-function stepPhoto() { $("photoMsg").textContent = ""; show("s-photo"); startCamera(); }
+function stepPhoto() {
+  if (cur) { cur.stage = "photo"; saveCur(); }
+  $("photoMsg").textContent = ""; show("s-photo"); startCamera();
+}
 
 // One camera, used by two screens: the violation photo and the "fixed" photo.
 const CAMS = {violation: {video: "viewfinder", msg: "vfMsg", shutter: "shutter", alt: "“Phone's camera app”"},
@@ -204,6 +391,8 @@ function stopCamera() {
   for (const k of Object.values(CAMS)) { const v = $(k.video); if (v) v.srcObject = null; }
 }
 
+// The frame is copied off the camera BEFORE it is switched off, and the next
+// screen shows that copy straight away — no black screen while anything saves.
 async function snap(which) {
   const k = CAMS[which], v = $(k.video);
   if (!v.videoWidth) return null;
@@ -212,71 +401,24 @@ async function snap(which) {
   c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext("2d").drawImage(v, 0, 0);
   const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.9));
-  stopCamera();
+  c.width = c.height = 0;                        // let the phone have that memory back
   return blob;
 }
 
 $("shutter").onclick = async () => {
   const blob = await snap("violation");
-  if (!blob) return;
-  $("vfMsg").hidden = false; $("vfMsg").textContent = "Saving the photo…";
-  await sendPhoto(blob);
-  if (current === "s-photo") startCamera();       // upload failed — try again
+  if (blob) usePhoto(blob);
 };
+$("camera").onchange = (e) => { if (e.target.files[0]) usePhoto(e.target.files[0]); e.target.value = ""; };
+$("library").onchange = (e) => { if (e.target.files[0]) usePhoto(e.target.files[0]); e.target.value = ""; };
 
-// ---- "It's fixed": photo of the fix, then a note in History & Notes -------------------
-let fixing = null, fixBlob = null;
-
-function fixWho(v) {
-  return `<div><b>Lot ${esc(v.lot)}</b> · ${esc(v.tenant_name)}<div class="what">${esc(v.what)}</div></div>`;
+function usePhoto(file) {
+  cur.photo = file; cur.strokes = []; cur.stage = "circle";
+  stepCircle();
+  // made smaller for keeping and sending, meanwhile (the marks are fractions of the photo, so they still fit)
+  const mine = cur;
+  shrink(file).then((small) => { if (cur === mine && cur.photo === file) { cur.photo = small; saveCur(); } });
 }
-
-function startFix(v) {
-  fixing = v; fixBlob = null;
-  $("fixWho").innerHTML = fixWho(v);
-  show("s-fix");
-  startCamera("fix");
-}
-
-$("fixShutter").onclick = async () => {
-  const blob = await snap("fix");
-  if (blob) reviewFix(await shrink(blob));
-};
-$("fixLibrary").onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = "";
-  if (f) reviewFix(await shrink(f));
-};
-$("fixNoPhoto").onclick = () => reviewFix(null);
-
-function reviewFix(blob) {
-  fixBlob = blob;
-  $("fixWho2").innerHTML = fixWho(fixing);
-  const img = $("fixPreview");
-  if (img.src) URL.revokeObjectURL(img.src);
-  img.hidden = !blob; $("fixNoPic").hidden = !!blob;
-  if (blob) img.src = URL.createObjectURL(blob); else img.removeAttribute("src");
-  $("fixErr").textContent = "";
-  $("fixSave").disabled = false; $("fixSave").textContent = blob ? "Save — it's fixed" : "Save without a photo";
-  show("s-fixok");
-}
-$("fixRetake").onclick = () => startFix(fixing);
-
-$("fixSave").onclick = async () => {
-  $("fixSave").disabled = true; $("fixSave").textContent = "Saving…";
-  let r;
-  try {
-    if (fixBlob) {
-      const fd = new FormData();
-      fd.append("photo0", fixBlob, "fixed.jpg");
-      r = await api(`/api/violations/${fixing.history_id}/fixed`, {method: "POST", body: fd});
-    } else {
-      r = await api(`/api/violations/${fixing.history_id}/fixed`, {json: {}});
-    }
-  } catch { r = {ok: false, error: "Couldn't reach the manager computer — check your signal and try again."}; }
-  if (!r.ok) { $("fixErr").textContent = r.error; $("fixSave").disabled = false; $("fixSave").textContent = "Try again"; return; }
-  fixing = null; fixBlob = null;
-  home();
-};
 
 async function shrink(file, edge = 2000) {
   try {
@@ -285,54 +427,49 @@ async function shrink(file, edge = 2000) {
     const c = document.createElement("canvas");
     c.width = Math.round(bmp.width * r); c.height = Math.round(bmp.height * r);
     c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-    return await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88));
+    bmp.close?.();
+    const out = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88));
+    c.width = c.height = 0;
+    return out || file;
   } catch { return file; }
 }
 
-async function sendPhoto(file) {
-  if (!file) return;
-  $("photoMsg").textContent = "Saving the photo…";
-  const fd = new FormData();
-  fd.append("photo0", await shrink(file), "photo.jpg");
-  let r;
-  try { r = await api(`/api/drafts/${draft.id}/photo`, {method: "POST", body: fd}); }
-  catch { $("photoMsg").textContent = "Couldn't reach the manager computer — check your signal and try again."; return; }
-  if (!r.ok) { $("photoMsg").textContent = r.error; return; }
-  $("photoMsg").textContent = "";
-  draft = r.draft;
-  stepCircle();
-}
-$("camera").onchange = (e) => { sendPhoto(e.target.files[0]); e.target.value = ""; };
-$("library").onchange = (e) => { sendPhoto(e.target.files[0]); e.target.value = ""; };
-
 // ---- step 2: circle the problem --------------------------------------------------
-let strokes = [], img = null, drawing = null;
+let strokes = [], img = null, imgUrl = null, drawing = null;
 
 function stepCircle() {
+  cur.stage = "circle";
   show("s-circle");
-  strokes = [];
+  strokes = (cur.strokes || []).map((s) => s.slice());
+  if (imgUrl) URL.revokeObjectURL(imgUrl);
+  imgUrl = URL.createObjectURL(cur.photo);
   img = new Image();
   img.onload = () => { sizeCanvas(); redraw(); };
-  img.src = `/api/drafts/${draft.id}/photo?t=${Date.now()}`;
+  img.src = imgUrl;
 }
 
+// Never bigger than the screen needs: a phone refuses (draws black) past a size.
 function sizeCanvas() {
   const c = $("canvas"), wrap = $("canvasWrap");
   const r = Math.min(wrap.clientWidth / img.width, wrap.clientHeight / img.height);
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
   c.style.width = `${img.width * r}px`; c.style.height = `${img.height * r}px`;
   c.width = Math.round(img.width * r * dpr); c.height = Math.round(img.height * r * dpr);
+}
+
+function drawMarks(g, w, h, list) {
+  g.strokeStyle = "#e61e28"; g.lineWidth = Math.max(4, w / 110); g.lineCap = "round"; g.lineJoin = "round";
+  for (const s of list) {
+    g.beginPath();
+    s.forEach(([x, y], i) => (i ? g.lineTo(x * w, y * h) : g.moveTo(x * w, y * h)));
+    g.stroke();
+  }
 }
 
 function redraw() {
   const c = $("canvas"), g = c.getContext("2d");
   g.drawImage(img, 0, 0, c.width, c.height);
-  g.strokeStyle = "#e61e28"; g.lineWidth = Math.max(4, c.width / 110); g.lineCap = "round"; g.lineJoin = "round";
-  for (const s of strokes.concat(drawing ? [drawing] : [])) {
-    g.beginPath();
-    s.forEach(([x, y], i) => (i ? g.lineTo(x * c.width, y * c.height) : g.moveTo(x * c.width, y * c.height)));
-    g.stroke();
-  }
+  drawMarks(g, c.width, c.height, strokes.concat(drawing ? [drawing] : []));
   $("circleNext").disabled = !strokes.length;
 }
 
@@ -349,12 +486,24 @@ $("undoBtn").onclick = () => { strokes.pop(); redraw(); };
 $("clearBtn").onclick = () => { strokes = []; redraw(); };
 $("retakeBtn").onclick = stepPhoto;
 
-$("circleNext").onclick = async () => {
-  $("circleNext").disabled = true; $("circleNext").textContent = "Saving…";
-  const r = await api(`/api/drafts/${draft.id}/marks`, {json: {strokes: strokes.map((s) => s.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]))}});
-  $("circleNext").textContent = "Next";
-  if (!r.ok) { alert(r.error); $("circleNext").disabled = false; return; }
-  draft = r.draft;
+// A small copy of the photo with the circle on it, for the next screens.
+let thumbUrl = "";
+function makeThumb() {
+  const t = document.createElement("canvas"), side = 112;
+  const r = Math.max(side / img.width, side / img.height);
+  t.width = t.height = side;
+  const g = t.getContext("2d"), w = img.width * r, h = img.height * r, x = (side - w) / 2, y = (side - h) / 2;
+  g.drawImage(img, x, y, w, h);
+  g.translate(x, y);
+  drawMarks(g, w, h, strokes);
+  thumbUrl = t.toDataURL("image/jpeg", 0.8);
+}
+
+$("circleNext").onclick = () => {
+  cur.strokes = strokes.map((s) => s.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]));
+  makeThumb();
+  cur.thumb = thumbUrl;
+  cur.stage = "lot"; saveCur();
   stepLot();
 };
 
@@ -362,10 +511,13 @@ $("circleNext").onclick = async () => {
 let digits = "", lotPick = null, tenantPick = null;
 
 async function stepLot() {
+  cur.stage = "lot";
   show("s-lot");
-  digits = ""; lotPick = null; tenantPick = null;
-  if (!parks.length) parks = (await api("/api/parks")).parks;
-  if (!park) park = parks[0];
+  if (!parks.length) { $("lotWho").textContent = "Loading the lots…"; await loadParks(); }
+  if (!parks.length) { $("lotWho").textContent = "Couldn't reach the manager computer — try again."; return; }
+  if (cur.lot) park = parks.find((p) => p.property_id === cur.lot.property_id) || park;
+  if (!park || !parks.includes(park)) park = parks[0];
+  digits = cur.lot ? lotName(cur.lot.lot) : ""; lotPick = null; tenantPick = null;
   // Two or more parks on this computer: a row of park buttons above the keypad.
   $("parkPick").hidden = parks.length < 2;
   $("parkPick").innerHTML = parks.map((p, i) =>
@@ -375,6 +527,8 @@ async function stepLot() {
     for (const x of $("parkPick").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b));
     renderLot();
   };
+  renderLot();
+  if (cur.lot && lotPick) tenantPick = lotPick.tenants.find((t) => t.id === cur.lot.tenant_id) || tenantPick;
   renderLot();
 }
 
@@ -404,48 +558,56 @@ for (const b of $("keypad").querySelectorAll("button")) b.onclick = () => {
   renderLot();
 };
 
-$("lotNext").onclick = async () => {
-  $("lotNext").disabled = true;
-  const r = await api(`/api/drafts/${draft.id}/lot`, {json: {property_id: park.property_id, unit_id: lotPick.unit_id, tenant_id: tenantPick.id}});
-  if (!r.ok) { alert(r.error); renderLot(); return; }
-  draft = r.draft;
-  stepItems(true);
+// Past violations for the warning suggestion: fetched as soon as the lot is
+// picked, so it's usually there before the last screen.
+const pastViolations = {};          // not "history": that name is the browser's own
+function historyFor(tid) {
+  return pastViolations[tid] ||= api(`/api/tenants/${tid}/history`).catch(() => ({ok: false}));
+}
+
+$("lotNext").onclick = () => {
+  const changed = !cur.lot || cur.lot.tenant_id !== tenantPick.id;
+  cur.lot = {property_id: park.property_id, park: park.park, unit_id: lotPick.unit_id, lot: lotPick.lot,
+             tenant_id: tenantPick.id, tenant_name: tenantPick.name};
+  if (changed) cur.warning = null;
+  cur.stage = "items"; saveCur();
+  historyFor(tenantPick.id);
+  stepItems();
 };
 
 // ---- step 4: what's wrong (tiles) ------------------------------------------------
-let picked = new Set(), others = [];
-
-function stepItems(fresh) {
+function stepItems() {
+  cur.stage = "items";
   show("s-items");
-  if (fresh) { picked = new Set(); others = []; level = null; hist = null; }
-  const L = draft.lot;
-  $("itemsWho").innerHTML = `<img class="thumb" src="/api/drafts/${draft.id}/photo?kind=marked&t=${Date.now()}" alt="">
+  const L = cur.lot, picked = new Set(cur.items);
+  $("itemsWho").innerHTML = `<img class="thumb" src="${cur.thumb || ""}" alt="">
     <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}</div>`;
   $("tiles").innerHTML = me.items.map((it) =>
     `<button class="tile" data-id="${it.id}" aria-pressed="${picked.has(it.id)}">${esc(it.short || it.label)}</button>`).join("") +
-    `<button class="tile other" id="otherTile" aria-pressed="${others.length > 0}">${others.length ? esc(others.join(", ")) : "Something else…"}</button>`;
+    `<button class="tile other" id="otherTile" aria-pressed="${cur.others.length > 0}">${cur.others.length ? esc(cur.others.join(", ")) : "Something else…"}</button>`;
   for (const b of $("tiles").querySelectorAll(".tile[data-id]")) b.onclick = () => {
-    picked.has(b.dataset.id) ? picked.delete(b.dataset.id) : picked.add(b.dataset.id);
-    b.setAttribute("aria-pressed", String(picked.has(b.dataset.id)));
-    $("itemsNext").disabled = !picked.size && !others.length;
+    const id = b.dataset.id;
+    cur.items = cur.items.includes(id) ? cur.items.filter((x) => x !== id) : cur.items.concat(id);
+    b.setAttribute("aria-pressed", String(cur.items.includes(id)));
+    $("itemsNext").disabled = !cur.items.length && !cur.others.length;
+    saveCur();
   };
   $("otherTile").onclick = () => {
     show("s-other");
-    $("other1").value = others[0] || ""; $("other2").value = others[1] || "";
+    $("other1").value = cur.others[0] || ""; $("other2").value = cur.others[1] || "";
     $("other1").focus();
   };
-  $("itemsNext").disabled = !picked.size && !others.length;
+  $("itemsNext").disabled = !cur.items.length && !cur.others.length;
 }
 $("otherDone").onclick = () => {
-  others = [$("other1").value, $("other2").value].map((s) => s.trim()).filter(Boolean);
+  cur.others = [$("other1").value, $("other2").value].map((s) => s.trim()).filter(Boolean);
   $("other1").blur(); $("other2").blur();
-  stepItems(false);
+  saveCur();
+  stepItems();
 };
 $("itemsNext").onclick = () => stepSend();
 
 // ---- step 5: warning & send -----------------------------------------------------------
-let hist = null;
-
 function dueDate(days, rule, from = new Date()) {
   const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + Number(days));
   if (rule === "next_monday") d.setDate(d.getDate() + ((8 - d.getDay()) % 7));
@@ -453,57 +615,93 @@ function dueDate(days, rule, from = new Date()) {
 }
 
 async function stepSend() {
+  cur.stage = "send"; saveCur();
   show("s-send");
-  const L = draft.lot;
-  const labels = me.items.filter((it) => picked.has(it.id)).map((it) => it.short || it.label).concat(others);
-  $("sendSummary").innerHTML = `<img class="thumb" src="/api/drafts/${draft.id}/photo?kind=marked" alt="">
+  const L = cur.lot, mine = cur;
+  const labels = me.items.filter((it) => cur.items.includes(it.id)).map((it) => it.short || it.label).concat(cur.others);
+  $("sendSummary").innerHTML = `<img class="thumb" src="${cur.thumb || ""}" alt="">
     <div><b>Lot ${esc(lotName(L.lot))}</b> · ${esc(L.tenant_name)}<div class="what">${esc(labels.join(" · "))}</div></div>`;
   $("levels").innerHTML = me.levels.map((l) => `<button type="button" data-l="${esc(l)}">${esc(l)}</button>`).join("");
-  for (const b of $("levels").querySelectorAll("button")) b.onclick = () => { setLevel(b.dataset.l); refresh(); };
-  setLevel(level); refresh();
-  if (!hist) {
-    $("suggestWhy").textContent = "Checking past violations…";
-    const h = await api(`/api/drafts/${draft.id}/history`);
-    if (h.ok) { hist = h; if (!level) setLevel(h.suggest.level); }
+  for (const b of $("levels").querySelectorAll("button")) b.onclick = () => { cur.warning = b.dataset.l; saveCur(); setLevel(); refresh(); };
+  $("notes").value = cur.notes || "";
+  $("issueErr").textContent = "";
+  setLevel(); refresh();
+  $("suggestWhy").textContent = "Checking past violations…";
+  const h = await historyFor(L.tenant_id);
+  if (cur !== mine || current !== "s-send") return;
+  if (h.ok) {
+    if (!cur.warning) { cur.warning = h.suggest.level; saveCur(); setLevel(); refresh(); }
+    $("suggestWhy").textContent = `Suggested: ${h.suggest.level} — ${h.suggest.why}.`;
+  } else {
+    $("suggestWhy").textContent = "Couldn't check past violations — pick the warning.";
   }
-  if (hist) $("suggestWhy").textContent = `Suggested: ${hist.suggest.level} — ${hist.suggest.why}.`;
-  refresh();
 }
-function setLevel(l) { level = l; for (const b of $("levels").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.l === l)); }
+function setLevel() { for (const b of $("levels").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.l === cur.warning)); }
 function refresh() {
-  const dates = [...picked].map((id) => { const it = me.items.find((x) => x.id === id); return dueDate(it.days, it.rule); })
-    .concat(others.map(() => dueDate(me.other.days, me.other.rule)));
+  const dates = cur.items.map((id) => { const it = me.items.find((x) => x.id === id); return it && dueDate(it.days, it.rule); })
+    .filter(Boolean).concat(cur.others.map(() => dueDate(me.other.days, me.other.rule)));
   const due = dates.length ? new Date(Math.max(...dates)) : null;
   $("due").textContent = due ? `Correct by ${due.toLocaleDateString([], {weekday: "long", month: "long", day: "numeric"})}` : "";
-  $("issueBtn").disabled = !level || !dates.length;
-  $("issueBtn").textContent = !level ? "Pick the warning" : me.mode === "live" ? "Issue violation" : "Issue violation (test)";
+  $("issueBtn").disabled = !cur.warning || !dates.length;
+  $("issueBtn").textContent = !cur.warning ? "Pick the warning" : me.mode === "live" ? "Issue violation" : "Issue violation (test)";
 }
+$("notes").oninput = () => { cur.notes = $("notes").value; saveCur(); };
 
-$("issueBtn").onclick = async () => {
-  $("issueErr").textContent = "";
-  $("issueBtn").disabled = true; $("issueBtn").textContent = "Sending…";
-  const r = await api(`/api/drafts/${draft.id}/issue`, {json: {items: [...picked], others, notes: $("notes").value, warning: level}});
-  if (!r.ok) { $("issueErr").textContent = r.error; refresh(); return; }
-  $("notes").value = "";
-  show("done"); $("doneTitle").textContent = "Writing it up…"; $("doneBody").innerHTML = ""; $("homeBtn").hidden = true;
-  poll(r.job.id);
+// Issue = into the outbox and straight back to the list; it sends by itself.
+$("issueBtn").onclick = () => {
+  const L = cur.lot;
+  const {stage, updated, ...v} = cur;
+  queue({...v, notes: $("notes").value, kind: "issue", state: "waiting", created: Date.now(),
+         property_id: L.property_id, unit_id: L.unit_id, tenant_id: L.tenant_id,
+         label: `Lot ${lotName(L.lot)} · ${L.tenant_name}`});
+  cur = null; store.del("current");
+  home();
 };
 
-async function poll(id) {
-  const r = await api(`/api/jobs/${id}`);
-  const j = r.job;
-  $("steps").innerHTML = j.steps.map((s) => `<li>${esc(s)}</li>`).join("");
-  if (!j.done) { setTimeout(() => poll(id), 1000); return; }
-  $("homeBtn").hidden = false;
-  if (j.error) { $("doneTitle").textContent = "Not finished"; $("doneBody").innerHTML = `<div class="bad">${esc(j.error)}</div>`; return; }
-  const x = j.result;
-  $("doneTitle").textContent = x.test ? "Done (test)" : "Violation issued";
-  $("doneBody").innerHTML = `<div class="good">Saved to ${x.test ? "the TEST record" : "the resident's History &amp; Notes"}.
-    Correct by ${esc(fmtDay(x.correct_by))} — you'll get a reminder that day.
-    ${x.printed ? (x.printed.ok ? " Printing now." : ` Didn't print: ${esc(x.printed.error)}`) : x.test ? " (Test mode doesn't print.)" : " No printer is set up."}</div>
-    <a class="btn big full" href="${x.pdf}" target="_blank" rel="noopener">View the notice</a>`;
-  draft = null;
+// ---- "It's fixed": photo of the fix, then (in the background) a note in History & Notes
+let fixing = null, fixBlob = null, fixUrl = null;
+
+function fixWho(v) {
+  return `<div><b>Lot ${esc(v.lot)}</b> · ${esc(v.tenant_name)}<div class="what">${esc(v.what)}</div></div>`;
 }
+
+function startFix(v) {
+  fixing = v; fixBlob = null;
+  $("fixWho").innerHTML = fixWho(v);
+  show("s-fix");
+  startCamera("fix");
+}
+
+$("fixShutter").onclick = async () => {
+  const blob = await snap("fix");
+  if (blob) reviewFix(blob);
+};
+$("fixLibrary").onchange = (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (f) reviewFix(f);
+};
+$("fixNoPhoto").onclick = () => reviewFix(null);
+
+function reviewFix(blob) {
+  fixBlob = blob;
+  $("fixWho2").innerHTML = fixWho(fixing);
+  const pic = $("fixPreview");
+  if (fixUrl) URL.revokeObjectURL(fixUrl);
+  fixUrl = blob ? URL.createObjectURL(blob) : null;
+  pic.hidden = !blob; $("fixNoPic").hidden = !!blob;
+  if (blob) pic.src = fixUrl; else pic.removeAttribute("src");
+  $("fixErr").textContent = "";
+  $("fixSave").disabled = false; $("fixSave").textContent = blob ? "Save — it's fixed" : "Save without a photo";
+  show("s-fixok");
+}
+$("fixRetake").onclick = () => startFix(fixing);
+
+$("fixSave").onclick = () => {
+  queue({kind: "fix", cid: newId(), history_id: fixing.history_id, photo: fixBlob, state: "waiting",
+         created: Date.now(), label: `Lot ${fixing.lot} · ${fixing.tenant_name}`});
+  fixing = null; fixBlob = null;
+  home();
+};
 
 window.addEventListener("resize", () => {
   if (current === "s-circle" && img?.complete) { sizeCanvas(); redraw(); }

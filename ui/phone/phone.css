@@ -129,12 +129,20 @@ input, textarea { border: 1px solid var(--line); border-radius: 12px; padding: 1
 #suggestWhy { margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .due { font-weight: 800; font-size: 17px; text-align: center; margin-top: auto; }
 
-/* sign in, done */
+/* sign in */
 #signin { justify-content: center; }
-.steps { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.steps li::before { content: "✓ "; color: var(--ok); font-weight: 800; }
-.good { background: var(--ok-dim); color: var(--ok); border-radius: 12px; padding: 12px; font-weight: 600; }
-.bad { background: var(--warn-dim); color: var(--warn); border-radius: 12px; padding: 12px; font-weight: 600; }
+
+/* the outbox: violations and fixes sending in the background (home screen) */
+.outbox { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; }
+.outbox:empty { display: none; }
+.ob { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; padding: 6px 10px; font-size: 13px; color: var(--ink-soft); }
+.ob > span:first-child { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ob.good { background: var(--ok-dim); color: var(--ok); border-color: transparent; font-weight: 600; }
+.ob.bad { background: var(--warn-dim); color: var(--warn); border-color: transparent; }
+.ob.bad > span:first-child { white-space: normal; }
+.obacts { display: flex; gap: 2px; }
+.obacts .link { padding: 4px 6px; font-size: 13px; color: inherit; }
 
 /* "it's fixed" */
 .canvaswrap { position: relative; }

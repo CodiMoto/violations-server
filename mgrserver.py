@@ -41,7 +41,7 @@ sys.path.insert(0, HERE)
 import rmconn  # noqa: E402
 import updater  # noqa: E402
 import violations as V  # noqa: E402
-import drafts  # noqa: E402
+import inbox  # noqa: E402
 
 PHONE_UI = os.path.join(HERE, "ui", "phone")
 SECRET_FILE = os.path.join(V.DATA, "session_secret")
@@ -49,7 +49,6 @@ SERVER_LOG = os.path.join(V.DATA, "server.log")
 MAX_UPLOAD = 80 * 1024 * 1024          # a dozen full-size phone photos
 SESSION_DAYS = 30
 
-_jobs = {}
 _fails = {}                            # ip → [times] of failed sign-ins
 
 
@@ -229,39 +228,18 @@ class Handler(SimpleHTTPRequestHandler):
             if url.path == "/api/home":
                 parks = [p["park"] for p in V.lots(rmconn.Connection("practice"))]
                 active = V.active_violations(rmconn.Connection("practice"), parks)
-                d = drafts.open_draft(user)
-                return self.reply({"ok": True, "active": active, "parks": parks,
-                                   "draft": _draft_view(d) if d else None})
+                return self.reply({"ok": True, "active": active, "parks": parks})
             if url.path == "/api/parks":
                 parks = V.lots(rmconn.Connection("practice"))
                 return self.reply({"ok": True, "parks": parks})
-            if url.path.startswith("/api/drafts/"):
-                parts = url.path.split("/")          # /api/drafts/<id>[/photo|/history]
-                did = parts[3]
-                if drafts.load(did).get("user") != user["username"]:
-                    return self.reply({"ok": False, "error": "not found"}, 404)
-                if len(parts) == 4:
-                    return self.reply({"ok": True, "draft": _draft_view(drafts.load(did))})
-                if parts[4] == "photo":
-                    kind = "marked" if q.get("kind") == "marked" else "original"
-                    path = drafts.photo_path(did, kind)
-                    if not os.path.exists(path):
-                        return self.reply({"ok": False}, 404)
-                    data = open(path, "rb").read()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/jpeg")
-                    self.send_header("Content-Length", str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
-                    return
-                if parts[4] == "history":
-                    d = drafts.load(did)
-                    hist = V.tenant_violations(rmconn.Connection("practice"), d["lot"]["tenant_id"])
-                    return self.reply({"ok": True, "history": hist,
-                                       "suggest": V.suggest_warning(hist)})
-            if url.path.startswith("/api/jobs/"):
-                job = _jobs.get(url.path.rsplit("/", 1)[-1])
-                return self.reply({"ok": bool(job), "job": job})
+            if url.path.startswith("/api/tenants/") and url.path.endswith("/history"):
+                # fetched by the phone in the background as soon as the lot is picked
+                hist = V.tenant_violations(rmconn.Connection("practice"), int(url.path.split("/")[3]))
+                return self.reply({"ok": True, "history": hist, "suggest": V.suggest_warning(hist)})
+            if url.path.startswith("/api/received/"):
+                st = inbox.status(url.path.rsplit("/", 1)[-1], user)
+                return self.reply({"ok": bool(st), "status": st} if st else {"ok": False, "error": "not found"},
+                                  200 if st else 404)
             if url.path == "/api/recent":
                 items = V._read(V.LOG, [])[-25:][::-1]
                 return self.reply({"ok": True, "items": [
@@ -321,71 +299,34 @@ class Handler(SimpleHTTPRequestHandler):
                 from datetime import date
                 due = V.deadline(date.today(), d.get("items", []), d.get("others", []))
                 return self.reply({"ok": True, "correct_by": due})
-            # ---- the step-by-step flow (drafts.py) ----
-            if url.path == "/api/drafts":
-                d = drafts.create(user)
-                log(f"{user['username']} started {d['id']}")
-                return self.reply({"ok": True, "draft": _draft_view(d)})
-            if url.path.startswith("/api/drafts/"):
-                parts = url.path.split("/")
-                did, step = parts[3], (parts[4] if len(parts) > 4 else "")
-                if drafts.load(did).get("user") != user["username"]:
-                    return self.reply({"ok": False, "error": "not found"}, 404)
-                if step == "photo":
-                    form = self.read_multipart()
-                    if not form["photos"]:
-                        raise ValueError("No photo came through — try again.")
-                    d = drafts.add_photo(did, form["photos"][0]["data"])
-                    log(f"{user['username']} photo for {did}: {len(form['photos'][0]['data']) // 1024} KB")
-                    return self.reply({"ok": True, "draft": _draft_view(d)})
-                d_in = json.loads(self.body() or b"{}")
-                if step == "marks":
-                    d = drafts.set_marks(did, d_in.get("strokes") or [])
-                    return self.reply({"ok": True, "draft": _draft_view(d)})
-                if step == "lot":
-                    d = drafts.set_lot(did, _park(d_in.get("property_id")), d_in["unit_id"],
-                                       d_in.get("tenant_id"))
-                    return self.reply({"ok": True, "draft": _draft_view(d)})
-                if step == "back":
-                    d = drafts.load(did)
-                    d["stage"] = {"items": "lot", "lot": "circle", "circle": "photo"}.get(d["stage"], d["stage"])
-                    return self.reply({"ok": True, "draft": _draft_view(drafts.save(d))})
-                if step == "cancel":
-                    drafts.cancel(did)
-                    return self.reply({"ok": True})
-                if step == "issue":
-                    # Clippy's own test scripts send this header. In live mode a
-                    # test must never reach a real tenant — 2026-09-23 one did
-                    # (Morristown lot 20) because the mode had been switched to
-                    # live between tests and nobody checked.
-                    if self.headers.get("X-Clippy-Test") and V.load_config()["mode"] == "live":
-                        return self.reply({"ok": False, "error": "Refused: this is a test and the app is LIVE."}, 409)
-                    d, form = drafts.to_form(did, d_in.get("items"), d_in.get("others"),
-                                             d_in.get("notes"), d_in.get("warning"))
-                    v = V.build(form, user, rmconn.Connection("practice"))
-                    job_id = v["ref"]
-                    _jobs[job_id] = {"id": job_id, "steps": [], "done": False, "error": None,
-                                     "result": None, "draft": did,
-                                     "started": datetime.now().isoformat(timespec="seconds")}
-                    threading.Thread(target=run_issue, args=(job_id, v, did), daemon=True).start()
-                    log(f"{user['username']} issued {job_id} from {did}: {v['park']} lot {v['lot']}")
-                    return self.reply({"ok": True, "job": _jobs[job_id],
-                                       "correct_by": v["correct_by"], "test": v["mode"] != "live"})
+            # ---- a finished violation, sent once in the background (inbox.py) ----
+            if url.path == "/api/issue":
+                # Clippy's own test scripts send this header. In live mode a
+                # test must never reach a real tenant — 2026-09-23 one did
+                # (Morristown lot 20) because the mode had been switched to
+                # live between tests and nobody checked.
+                if self.headers.get("X-Clippy-Test") and V.load_config()["mode"] == "live":
+                    return self.reply({"ok": False, "error": "Refused: this is a test and the app is LIVE."}, 409)
+                form = self.read_multipart()
+                photo = form["photos"][0]["data"] if form["photos"] else None
+                st = inbox.submit_violation(user, form, photo, _park(form.get("property_id")))
+                return self.reply({"ok": True, "status": st})
             if url.path.startswith("/api/violations/") and url.path.endswith("/fixed"):
                 hid = int(url.path.split("/")[3])
-                photo = None
                 if (self.headers.get("Content-Type") or "").startswith("multipart/form-data"):
                     form = self.read_multipart()
                     photo = form["photos"][0]["data"] if form["photos"] else None
+                else:
+                    form, photo = json.loads(self.body() or b"{}"), None
                 conn = rmconn.Connection("live")
                 if self.headers.get("X-Clippy-Test"):
                     orig = conn.get(f"HistoryNotes/{hid}", {"fields": "EntityType"}) or {}
                     if orig.get("EntityType") != "Prospect":
                         return self.reply({"ok": False, "error": "Refused: test on a real tenant's record."}, 409)
-                res = V.record_fix(conn, hid, user, photo)
-                log(f"{user['username']} marked {hid} fixed -> note {res['history_id']}"
+                st = inbox.submit_fix(user, form.get("cid"), hid, photo, conn)
+                log(f"{user['username']} marked {hid} fixed -> {st.get('result', {}).get('history_id')}"
                     f" ({'photo' if photo else 'no photo'})")
-                return self.reply({"ok": True, **res})
+                return self.reply({"ok": True, "status": st})
             self.reply({"ok": False, "error": "not found"}, 404)
         except ValueError as e:
             self.reply({"ok": False, "error": str(e)}, 400)
@@ -429,30 +370,6 @@ def _park(property_id=None):
     return park
 
 
-def _draft_view(d):
-    """What the phone needs to know about a draft (no file paths)."""
-    return {k: d.get(k) for k in ("id", "stage", "photo", "lot", "created", "updated")} | \
-        {"has_marks": bool(d.get("marks"))}
-
-
-def run_issue(job_id, v, did=None):
-    job = _jobs[job_id]
-    try:
-        rec = V.issue(rmconn.Connection("live"), v,
-                      progress=lambda msg: job["steps"].append(msg))
-        if did:
-            drafts.mark_issued(did, rec["ref"])
-        job["result"] = {"ref": rec["ref"], "history_id": rec["history_id"],
-                         "attached": rec["attached"], "correct_by": rec["correct_by"],
-                         "printed": rec["printed"], "test": rec["test"],
-                         "pdf": f"/api/letters/{rec['ref']}.pdf"}
-    except Exception as e:
-        job["error"] = rmconn._msg(e) if hasattr(e, "body") else str(e)
-        log(f"{job_id} failed\n" + traceback.format_exc())
-    finally:
-        job["done"] = True
-
-
 def reminder_loop():
     """Every 30 minutes: any violation deadlines arrived? (Reads Rent Manager.)"""
     time.sleep(20)
@@ -476,6 +393,8 @@ def main():
     host = "0.0.0.0" if "--lan" in sys.argv else "127.0.0.1"
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
+    inbox.log = log
+    inbox.recover()
     if "--no-reminders" not in sys.argv:
         threading.Thread(target=reminder_loop, daemon=True).start()
     log(f"listening on {host}:{port}")
