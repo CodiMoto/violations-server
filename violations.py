@@ -492,6 +492,8 @@ def issue(conn, v, progress=None):
 # ---- printing -----------------------------------------------------------------
 
 SUMATRA = os.path.join(HERE, "tools", "SumatraPDF", "SumatraPDF.exe")
+PRINTWATCH = os.path.join(HERE, "printwatch.ps1")
+WATCH_SECONDS = 120                                  # how long a notice may take to come out
 
 
 def printers():
@@ -503,8 +505,8 @@ def printers():
 
 
 def print_pdf(pdf_bytes, printer, ref="print"):
-    """Silent print through SumatraPDF (no dialog, no window)."""
-    import subprocess
+    """Silent print through SumatraPDF (no dialog, no window) — then watch what
+    Windows does with the job, so "printing" on the phone means it printed."""
     path = os.path.join(DATA, "letters", f"{ref}-print.pdf")
     with open(path, "wb") as f:
         f.write(pdf_bytes)
@@ -512,17 +514,75 @@ def print_pdf(pdf_bytes, printer, ref="print"):
         return {"ok": False, "error": "The print helper (SumatraPDF) isn't installed."}
     if _session_id() == 0:
         return _queue_print(path, printer, ref)
+    return send_to_printer(path, printer)
+
+
+def send_to_printer(path, printer, seconds=WATCH_SECONDS):
+    """SumatraPDF hands the PDF to Windows; printwatch.ps1 then reports whether
+    it came out. Returns what the phone is told — see print_verdict."""
+    import subprocess
     r = subprocess.run([SUMATRA, "-print-to", printer, "-print-settings", "fit", "-silent", path],
-                       capture_output=True, text=True, timeout=120, creationflags=0x08000000)
-    return {"ok": r.returncode == 0, "printer": printer,
-            "error": (r.stderr or r.stdout).strip()[:300] if r.returncode else None}
+                       capture_output=True, text=True, timeout=180, creationflags=0x08000000)
+    if r.returncode:
+        return {"ok": False, "printer": printer, "verified": True, "retry": True,
+                "error": sumatra_problem(r.stdout + r.stderr, printer)}
+    return print_verdict(watch_print(printer, path, seconds), printer)
+
+
+def sumatra_problem(output, printer):
+    """SumatraPDF's own line for what went wrong ("Printing problem.: ..."), in plain words."""
+    m = re.search(r"Printing problem\.?:\s*(.+)", output)
+    msg = m.group(1).strip() if m else ((output.strip().splitlines() or ["unknown problem"])[-1])[:200]
+    if "doesn't exist" in msg or "does not exist" in msg:
+        return f"Windows can't find the printer '{printer}'. Check Printers & scanners on the manager computer."
+    return f"the print helper couldn't send it: {msg}"
+
+
+def watch_print(printer, path, seconds=WATCH_SECONDS):
+    """printwatch.ps1's report on the job: {"verdict": printed|error|gone|waiting,
+    "status", "pages", "total", "failed", "seconds"} — or None if the watcher
+    itself couldn't run (then nobody is alarmed, see print_verdict)."""
+    import subprocess
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", PRINTWATCH,
+                            "-Printer", printer, "-Document", path, "-Seconds", str(seconds)],
+                           capture_output=True, text=True, timeout=seconds + 60, creationflags=0x08000000)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception:
+        return None
+
+
+def print_verdict(info, printer):
+    """What the phone is told, from the watcher's report.
+    ok        it printed — or Windows had no verdict and took it without complaint
+    verified  Windows actually confirmed it (False = only handed over)
+    retry     nothing is waiting in the Windows queue, so sending it again won't
+              print two copies (print_queue.py retries only then)"""
+    if not info:
+        return {"ok": True, "printer": printer, "verified": False, "error": None}
+    v = info.get("verdict")
+    if v == "printed":
+        return {"ok": True, "printer": printer, "verified": True, "pages": info.get("pages"), "error": None}
+    if v == "error":
+        return {"ok": False, "printer": printer, "verified": True, "retry": False,
+                "error": f"the printer reports a problem ({info.get('status')}). Check paper and ink, and that "
+                         "it's on and connected; the notice prints when it's ready."}
+    if v == "gone":
+        if info.get("failed"):
+            return {"ok": False, "printer": printer, "verified": True, "retry": True,
+                    "error": f"Windows couldn't print to '{printer}'. Check it's on and connected to the network."}
+        return {"ok": True, "printer": printer, "verified": False, "error": None}
+    return {"ok": False, "printer": printer, "verified": True, "retry": False,
+            "error": f"nothing has printed after {info.get('seconds', WATCH_SECONDS)} seconds. Check the printer; "
+                     "the notice prints when it's ready."}
 
 
 # The phone server runs from Windows startup, outside anyone's sign-in, so it
 # keeps going when nobody is signed in. From there SumatraPDF reports success
 # but nothing reaches the printer (tested 2026-09-24). So it queues the job
 # and the "Violations Print" task (print_queue.py) prints it in the
-# signed-in session — straight away, or at the next sign-in.
+# signed-in session — straight away, or at the next sign-in — and reports
+# back through <ref>.result.json.
 PRINT_QUEUE = os.path.join(DATA, "print-queue")
 PRINT_TASK = "Violations Print"
 
@@ -544,16 +604,35 @@ def _signed_in():
     return "explorer.exe" in r.stdout.lower()
 
 
-def _queue_print(path, printer, ref):
+def _queue_print(path, printer, ref, wait=WATCH_SECONDS + 30):
     import subprocess
+    import time
     os.makedirs(PRINT_QUEUE, exist_ok=True)
+    result = os.path.join(PRINT_QUEUE, f"{ref}.result.json")
+    for stale in (result, os.path.join(PRINT_QUEUE, f"{ref}.failed")):
+        try:
+            os.remove(stale)
+        except OSError:
+            pass
     _write(os.path.join(PRINT_QUEUE, f"{ref}.json"), {"pdf": path, "printer": printer})
     if not _signed_in():
-        return {"ok": False, "printer": printer, "queued": True,
+        return {"ok": False, "printer": printer, "queued": True, "verified": True, "retry": False,
                 "error": "nobody is signed in to the computer. It prints as soon as someone signs in."}
     subprocess.run(["schtasks", "/run", "/tn", PRINT_TASK],
                    capture_output=True, text=True, timeout=30, creationflags=0x08000000)
-    return {"ok": True, "printer": printer, "queued": True, "error": None}
+    until = time.time() + wait
+    while time.time() < until:                    # print_queue.py answers in <ref>.result.json
+        r = _read(result, None)
+        if r is not None:
+            try:
+                os.remove(result)
+            except OSError:
+                pass
+            return r | {"queued": True}
+        time.sleep(2)
+    return {"ok": False, "printer": printer, "queued": True, "verified": False, "retry": False,
+            "error": f"no word from the printer after {wait} seconds. Check it's on; the computer keeps "
+                     "trying for a few minutes."}
 
 
 # ---- the deadline watcher -----------------------------------------------------

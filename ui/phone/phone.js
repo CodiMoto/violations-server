@@ -282,7 +282,8 @@ function outLine(o) {
   if (o.state === "done") {
     const x = o.result || {};
     const extra = o.kind === "fix" ? "marked fixed" :
-      x.test ? "done (test)" : `issued${x.printed ? (x.printed.ok ? " · printing" : " · didn't print") : ""}`;
+      x.test ? "done (test)" : `issued${x.printed ? (x.printed.ok ? (x.printed.verified ? " · printed" : " · printing")
+        : ` · didn't print: ${esc(x.printed.error)}`) : ""}`;
     return `<div class="ob good"><span>✓ ${who} — ${extra}</span></div>`;
   }
   if (o.state === "failed") {

@@ -77,3 +77,43 @@ class Passwords(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Printing(unittest.TestCase):
+    """What the phone is told after a print, from what Windows reported (no printer needed)."""
+    P = "HP OfficeJet"
+
+    def test_printed(self):
+        r = V.print_verdict({"verdict": "printed", "pages": 2, "total": 2}, self.P)
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["verified"])
+
+    def test_printer_problem_is_reported_and_not_sent_twice(self):
+        r = V.print_verdict({"verdict": "error", "status": "Error, Printing", "pages": 0}, self.P)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["retry"])            # Windows still has it — a resend = two copies
+        self.assertIn("Error, Printing", r["error"])
+
+    def test_windows_gave_up_means_send_again(self):
+        r = V.print_verdict({"verdict": "gone", "failed": True}, self.P)
+        self.assertFalse(r["ok"])
+        self.assertTrue(r["retry"])
+        self.assertIn(self.P, r["error"])
+
+    def test_no_verdict_is_not_an_alarm(self):
+        for info in (None, {"verdict": "gone", "failed": False}):
+            r = V.print_verdict(info, self.P)
+            self.assertTrue(r["ok"])
+            self.assertFalse(r["verified"])
+
+    def test_still_waiting(self):
+        r = V.print_verdict({"verdict": "waiting", "status": "Printing", "seconds": 120}, self.P)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["retry"])
+        self.assertIn("120", r["error"])
+
+    def test_sumatra_problem_in_plain_words(self):
+        out = ("Starting SumatraPDF 3.5.2\nPrinting problem.: Printer with given name doesn't exist\n"
+               "Exiting with exit code: 1")
+        self.assertIn("can't find the printer 'HP OfficeJet'", V.sumatra_problem(out, self.P))
+        self.assertIn("out of paper", V.sumatra_problem("Printing problem.: out of paper", self.P))

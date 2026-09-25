@@ -94,7 +94,7 @@ $("printPhotos").onchange = async () => { d = await call("save", {print_photos: 
 $("testPrint").onclick = async () => {
   $("printMsg").textContent = "Printing…";
   const r = await call("test_print", {printer: $("printer").value});
-  $("printMsg").innerHTML = r.ok ? `<span class="ok">Sent to ${esc(r.printer)}.</span>` : `<span class="bad">${esc(r.error || "Didn't print.")}</span>`;
+  $("printMsg").innerHTML = r.ok ? `<span class="ok">${r.verified ? "Printed on" : "Sent to"} ${esc(r.printer)}.</span>` : `<span class="bad">${esc(r.error || "Didn't print.")}</span>`;
 };
 $("saveItems").onclick = async () => {
   const items = [], other = {};

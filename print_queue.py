@@ -3,18 +3,20 @@
 Run by the "Violations Print" task in the signed-in Windows session: at
 sign-in, every minute, and straight away when the server queues a notice.
 Each job is data/violations/print-queue/<ref>.json = {"pdf": ..., "printer": ...}.
+What became of it goes back to the server in <ref>.result.json (and to print.log).
 """
 
 import glob
 import json
 import os
-import subprocess
+import time
 from datetime import datetime
 
+import violations as V
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-QUEUE = os.path.join(ROOT, "data", "violations", "print-queue")
+QUEUE = V.PRINT_QUEUE
 LOG = os.path.join(ROOT, "data", "violations", "print.log")
-SUMATRA = os.path.join(ROOT, "tools", "SumatraPDF", "SumatraPDF.exe")
 MAX_TRIES = 5
 
 
@@ -23,10 +25,28 @@ def log(msg):
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
 
 
+def report(ref, res):
+    V._write(os.path.join(QUEUE, f"{ref}.result.json"),
+             res | {"at": datetime.now().isoformat(timespec="seconds")})
+
+
+def tidy():
+    """Answers the server never collected (it waits a couple of minutes) — drop after an hour."""
+    for f in glob.glob(os.path.join(QUEUE, "*.result.json")):
+        try:
+            if time.time() - os.path.getmtime(f) > 3600:
+                os.remove(f)
+        except OSError:
+            pass
+
+
 def main():
+    os.makedirs(QUEUE, exist_ok=True)
+    tidy()
     tried = set()
     while True:     # a notice can be queued while this is printing another
-        jobs = [j for j in sorted(glob.glob(os.path.join(QUEUE, "*.json"))) if j not in tried]
+        jobs = [j for j in sorted(glob.glob(os.path.join(QUEUE, "*.json")))
+                if j not in tried and not j.endswith(".result.json")]
         if not jobs:
             return
         for job in jobs:
@@ -42,16 +62,22 @@ def main():
                 log(f"{ref}: {j['pdf']} is missing, dropped")
                 os.remove(job)
                 continue
-            r = subprocess.run([SUMATRA, "-print-to", j["printer"], "-print-settings", "fit",
-                                "-silent", j["pdf"]],
-                               capture_output=True, text=True, timeout=180)
-            if r.returncode == 0:
-                log(f"{ref}: sent to {j['printer']}")
+            res = V.send_to_printer(j["pdf"], j["printer"])
+            report(ref, res)
+            if res["ok"]:
+                how = f"{res['pages']} page(s) printed" if res.get("pages") else "handed to Windows"
+                log(f"{ref}: {how} on {j['printer']}")
                 os.remove(job)
                 continue
             tries = j.get("tries", 0) + 1
-            log(f"{ref}: print failed (try {tries}): {(r.stderr or r.stdout).strip()[:300]}")
-            if tries >= MAX_TRIES:
+            log(f"{ref}: didn't print (try {tries}): {res['error']}")
+            if not res.get("retry"):
+                # It's sitting in the Windows print queue (printer off, out of paper...):
+                # Windows prints it when the printer is ready, and sending it again
+                # would print two copies. So it's Windows' job now.
+                log(f"{ref}: left in the Windows print queue")
+                os.remove(job)
+            elif tries >= MAX_TRIES:
                 os.replace(job, job[:-5] + ".failed")
             else:
                 j["tries"] = tries
