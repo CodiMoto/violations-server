@@ -40,7 +40,9 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
   needed) and is checked every 5 minutes. It runs outside anyone's sign-in,
   where Windows printing silently does nothing, so it queues each notice and
   the *Violations Print* task prints it in the signed-in session — at once, or
-  at the next sign-in.
+  at the next sign-in. After every print, `printwatch.ps1` watches the Windows
+  print queue, so the phone says *didn't print* — and why — when the printer is
+  off, out of paper or unreachable, instead of "printing".
 - **Updates itself.** `updater.py` runs hourly on each manager's computer
   (public repository — no GitHub account or key needed):
   a push to `main` reaches every computer within the hour, once its tests pass

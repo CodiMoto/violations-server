@@ -110,7 +110,7 @@ needed if Violations Settings says to.
 | Violations Settings: "Phone server isn't running" | Restart the computer; if still red, run install.ps1 again. |
 | "Could not sign in to Rent Manager" | Delete `config.json` and run install.ps1 again to re-enter the login. Check **API Access** is ticked on the Rent Manager user. |
 | Password doesn't work on the phone | Set it again in Violations Settings and wait for the green ✓. |
-| Nothing prints | Violations Settings → Printer → Print a test page. Test mode never prints. Notices print only while the manager's Windows user is signed in (it can be locked); ones added while nobody is signed in print at the next sign-in. |
+| Nothing prints | The phone says why under the notice (printer off, out of paper, not found...). Violations Settings → Printer → Print a test page. Test mode never prints. Notices print only while the manager's Windows user is signed in (it can be locked); ones added while nobody is signed in print at the next sign-in. |
 | Updates: "Couldn't reach GitHub" | Is the computer online? It tries again every hour by itself. |
 
 Logs: `C:\ViolationsServer\data\violations\server.log` (phone server),
