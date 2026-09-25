@@ -49,7 +49,7 @@ function toSignin() {
 }
 // Which version this park's computer runs — so Codi can see at a glance which parks are up to date.
 function verText(v) {
-  if (!v || !v.version) return v && v.dev ? "Development copy" : "Version: as installed (updates within the hour)";
+  if (!v || !v.version) return v && v.dev ? "Development copy" : "";
   const when = v.installed_at ? " · updated " + new Date(v.installed_at).toLocaleDateString([], {month: "short", day: "numeric"}) : "";
   return `${v.dev ? "Development copy" : "Version"} ${v.version}${when}`;
 }

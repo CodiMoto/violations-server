@@ -45,6 +45,12 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
 
 A push to `main` **is** a release to every park. So:
 
+- **Every change is a release.** Bump `VERSION` in the same commit — the last
+  number for small changes and fixes (1.3.0 → 1.3.1), the middle one for new
+  features (1.3.1 → 1.4.0) — push, then make a GitHub release on that commit:
+  tag `v1.3.1`, title "1.3.1: <what changed>", plain-language notes saying what managers will
+  notice and whether `install.ps1` has to be run again. The phone app and
+  Violations Settings show the `VERSION` each computer runs.
 - Run the tests first: `venv\Scripts\python -m unittest discover -s tests`.
   (Each computer runs them again before installing; failing tests = not installed.)
 - **New setting?** Add it to `violations_config.example.json` — computers
@@ -75,6 +81,7 @@ A push to `main` **is** a release to every park. So:
 |---|---|
 | `install.ps1` | install on a manager's computer (safe to re-run) |
 | `updater.py` | hourly self-update from GitHub, with rollback |
+| `VERSION` | this release's number, shown on the phone and in Settings |
 | `mgrserver.py` | the phone server |
 | `violations.py` | notice, deadlines, Rent Manager notes, reminders |
 | `drafts.py` | the step-by-step violation being written |

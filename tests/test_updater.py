@@ -106,15 +106,18 @@ class Updater(unittest.TestCase):
         self.assertEqual(self.read("mgrserver.py"), "old")
 
 
-    def test_version_shown_on_the_phone(self):
+    def test_release_number_shown_on_the_phone(self):
         self.assertEqual(U.current_version(), {"version": None, "installed_at": None, "dev": False})
+        self.write("VERSION", "1.4.0\n")
         U._save(installed="2a878fe79f835aaf", installed_at="2026-09-24T21:00:00")
-        self.assertEqual(U.current_version(), {"version": "2a878fe", "installed_at": "2026-09-24T21:00:00",
+        self.assertEqual(U.current_version(), {"version": "1.4.0", "installed_at": "2026-09-24T21:00:00",
                                                "dev": False})
-        os.makedirs(os.path.join(self.here, ".git", "refs", "heads"))
-        self.write(".git/HEAD", "ref: refs/heads/main\n")
-        self.write(".git/refs/heads/main", "9547db6aaaa\n")
-        self.assertEqual(U.current_version(), {"version": "9547db6", "installed_at": None, "dev": True})
+        os.makedirs(os.path.join(self.here, ".git"))
+        self.assertTrue(U.current_version()["dev"])
+
+    def test_every_release_has_a_version_file(self):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.assertRegex(U.release(here) or "", r"^\d+\.\d+\.\d+$")
 
 
 class NewSettings(unittest.TestCase):

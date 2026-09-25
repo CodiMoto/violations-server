@@ -68,7 +68,7 @@ function renderUpdates(u) {
     $("upd").innerHTML = `<p class="hint">This is Codi's development copy${u.version ? ` (version <b>${esc(u.version)}</b>)` : ""} — it's where new versions come from, so it doesn't update itself.</p>`;
     $("updNow").hidden = true; return;
   }
-  const ver = u.version ? `Version <b>${esc(u.version)}</b>, put in ${esc(fmtWhen(u.installed_at))}.` : "Version: as installed.";
+  const ver = `Version <b>${esc(u.version || "unknown")}</b>${u.installed_at ? `, put in ${esc(fmtWhen(u.installed_at))}` : ""}.`;
   const last = u.last_check ? ` Last checked ${esc(fmtWhen(u.last_check))}:` : "";
   $("upd").innerHTML = `<p>${ver}${last} <span class="${u.problem ? "bad" : ""}">${esc(u.checking ? "checking now…" : (u.result || "not checked yet."))}</span></p>`;
   clearTimeout(updTimer);

@@ -69,32 +69,22 @@ def status():
         return {}
 
 
+def release(folder=None):
+    """The release number in a copy of the program (the VERSION file), e.g. "1.4.0"."""
+    try:
+        with open(os.path.join(folder or HERE, "VERSION"), encoding="utf-8-sig") as f:
+            return f.read().strip()[:20] or None
+    except OSError:
+        return None
+
+
 def current_version():
-    """Which version this computer is running: {"version": short id or None,
+    """Which release this computer is running: {"version": "1.4.0" or None,
     "installed_at": iso or None, "dev": bool}. Shown on the phone app and in
-    Violations Settings so Codi can see at a glance which parks are up to date.
-    None = installed from a ZIP and not updated since (it will be within the hour)."""
-    git = os.path.join(HERE, ".git")
-    if os.path.isdir(git):                     # Codi's development copy
-        try:
-            with open(os.path.join(git, "HEAD"), encoding="utf-8") as f:
-                head = f.read().strip()
-            sha = head
-            if head.startswith("ref: "):
-                ref = head[5:]
-                path = os.path.join(git, *ref.split("/"))
-                if os.path.exists(path):
-                    with open(path, encoding="utf-8") as f:
-                        sha = f.read().strip()
-                else:
-                    with open(os.path.join(git, "packed-refs"), encoding="utf-8") as f:
-                        sha = next(line.split()[0] for line in f if line.rstrip().endswith(" " + ref))
-            return {"version": sha[:7], "installed_at": None, "dev": True}
-        except (OSError, StopIteration):
-            return {"version": None, "installed_at": None, "dev": True}
+    Violations Settings so Codi can see at a glance which parks are up to date."""
     st = status()
-    return {"version": (st.get("installed") or "")[:7] or None, "installed_at": st.get("installed_at"),
-            "dev": False}
+    return {"version": release(), "installed_at": st.get("installed_at"),
+            "dev": os.path.isdir(os.path.join(HERE, ".git"))}
 
 
 def _save(**changes):
@@ -136,6 +126,15 @@ def _get(url, accept):
 def latest_version():
     return _get(f"https://api.github.com/repos/{REPO}/commits/{BRANCH}",
                 "application/vnd.github.sha").decode().strip()
+
+
+def _name(sha):
+    """"1.4.0" for a version on GitHub (its VERSION file), or its short code if it has none."""
+    try:
+        return _get(f"https://api.github.com/repos/{REPO}/contents/VERSION?ref={sha}",
+                    "application/vnd.github.raw").decode("utf-8-sig").strip()[:20] or sha[:7]
+    except Exception:
+        return sha[:7]
 
 
 def download(sha, into):
@@ -297,10 +296,10 @@ def check(now=False):
     if sha == st.get("installed"):
         return _save(last_check=_stamp(), result="Up to date.", problem=False)
     if sha == st.get("bad") and not now:
-        return _save(last_check=_stamp(), result=f"Version {sha[:7]} didn't work here, so it wasn't kept. "
+        return _save(last_check=_stamp(), result=f"Version {_name(sha)} didn't work here, so it wasn't kept. "
                                                  "Waiting for a newer one.", problem=True)
     if not now and idle_minutes() < IDLE_MINUTES:
-        return _save(last_check=_stamp(), result=f"New version {sha[:7]} waiting — the phone app is in use, "
+        return _save(last_check=_stamp(), result=f"New version {_name(sha)} waiting — the phone app is in use, "
                                                  "it'll go in once it's been quiet for 10 minutes.")
 
     new_dir = os.path.join(WORK, "new")
@@ -314,21 +313,22 @@ def check(now=False):
         if r.returncode:
             log(f"{sha[:7]}: library install failed\n{r.stdout[-2000:]}{r.stderr[-2000:]}")
             return _save(last_check=_stamp(), bad=sha, problem=True,
-                         result=f"Version {sha[:7]} needs libraries that wouldn't install, so it wasn't put in.")
+                         result=f"Version {release(new_dir) or sha[:7]} needs libraries that wouldn't install, so it wasn't put in.")
 
     ok, out = _run_tests(new_dir)
     if not ok:
         log(f"{sha[:7]}: tests failed — not installed\n{out}")
         return _save(last_check=_stamp(), bad=sha, problem=True,
-                     result=f"Version {sha[:7]} failed its checks, so it wasn't put in.")
+                     result=f"Version {release(new_dir) or sha[:7]} failed its checks, so it wasn't put in.")
 
+    name = release(new_dir) or sha[:7]
     ok, what = apply(sha, new_dir, files)
     log(f"{sha[:7]}: {'installed' if ok else 'NOT installed'} — {what}")
     shutil.rmtree(new_dir, ignore_errors=True)
     if not ok:
-        return _save(last_check=_stamp(), bad=sha, problem=True, result=f"Version {sha[:7]}: {what}.")
+        return _save(last_check=_stamp(), bad=sha, problem=True, result=f"Version {name}: {what}.")
     return _save(last_check=_stamp(), installed=sha, installed_at=_stamp(), files=files, bad=None,
-                 problem=False, result=f"Updated to version {sha[:7]}.")
+                 problem=False, result=f"Updated to version {name}.")
 
 
 def _stamp():
