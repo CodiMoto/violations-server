@@ -20,7 +20,7 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
         │                 ├─ drafts.py      each step saved as it's done
         │                 └─ rmconn.py / rmclient.py   Rent Manager API
         ├─ settings_app.py  Violations Settings (127.0.0.1:8791, never exposed)
-        └─ printer (SumatraPDF, silent)
+        └─ print_queue.py → printer (SumatraPDF, silent)
 ```
 
 - **Rent Manager is the record.** Violations are tenant History Notes,
@@ -29,6 +29,11 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
   active list and deadlines are read back from Rent Manager.
 - **No AI runs in this program.** It's plain code: rules, lookups, a form.
 - **Test mode** (the default) writes to a test prospect and never prints.
+- **Always running.** The phone server starts with Windows (no sign-in
+  needed) and is checked every 5 minutes. It runs outside anyone's sign-in,
+  where Windows printing silently does nothing, so it queues each notice and
+  the *Violations Print* task prints it in the signed-in session — at once, or
+  at the next sign-in.
 - **Updates itself.** `updater.py` runs hourly on each manager's computer
   (public repository — no GitHub account or key needed):
   a push to `main` reaches every computer within the hour, once its tests pass
@@ -74,6 +79,7 @@ A push to `main` **is** a release to every park. So:
 | `violations.py` | notice, deadlines, Rent Manager notes, reminders |
 | `drafts.py` | the step-by-step violation being written |
 | `settings_app.py` | Violations Settings page |
+| `print_queue.py` | prints queued notices in the signed-in session |
 | `rmconn.py`, `rmclient.py` | Rent Manager API (token re-use, rate limits) |
 | `imaging.py` | phone photos incl. iPhone HEIC |
 | `notify.py` | reminder email (only where switched on) |

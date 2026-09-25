@@ -7,10 +7,11 @@
 #
 #   -RestartOnly   just restart the phone server (used by Violations Settings)
 
-param([switch]$RestartOnly)
+param([switch]$RestartOnly, [string]$User = "$env:USERDOMAIN\$env:USERNAME")
 $ErrorActionPreference = 'Stop'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $task = 'Violations Server'
+$printTask = 'Violations Print'
 $venvPy = Join-Path $dir 'venv\Scripts\python.exe'
 $venvPyw = Join-Path $dir 'venv\Scripts\pythonw.exe'
 
@@ -39,6 +40,17 @@ function Restart-Server {
 }
 
 if ($RestartOnly) { Restart-Server; exit 0 }
+
+# Starting the phone server with Windows (before anyone signs in) needs administrator
+# rights to set up, so ask Windows for them. -User keeps everything for the person who
+# ran this, even if Windows asks for a different administrator's password.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Start-Process powershell -Verb RunAs -Wait -ArgumentList `
+        "-NoProfile -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -User `"$User`""
+    exit 0
+}
 
 Write-Host 'Violations Server setup' -ForegroundColor White
 Write-Host "Folder: $dir"
@@ -100,7 +112,7 @@ if (-not (Test-Path $cfg)) {
     $o.username = $u; $o.password = $p
     Write-Json $o $cfg
     # Only this Windows user may read the file with the password in it.
-    icacls $cfg /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+    icacls $cfg /inheritance:r /grant:r "${User}:(R,W)" | Out-Null
 }
 New-Item -ItemType Directory -Force (Join-Path $dir 'data') | Out-Null
 $ErrorActionPreference = 'Continue'      # a login error below must be reported, not crash the script
@@ -126,15 +138,34 @@ if (-not (Test-Path $vcfg)) {
 }
 Write-Host 'Done. The phone password, park and printer are set in Violations Settings.' -ForegroundColor Green
 
-# 6. Start the phone server whenever this computer's user signs in -------------------------------
+# 6. Keep the phone server running: from Windows startup (nobody needs to sign in), at sign-in,
+#    and checked every 5 minutes in case it stopped. It runs outside anyone's sign-in ("S4U",
+#    no password stored), where printing doesn't work - so notices are printed by the
+#    "Violations Print" task in the signed-in session (print_queue.py): at once if someone is
+#    signed in, otherwise at the next sign-in. The update task below runs the same way. ---------
 Say 'Phone server'
 $action = New-ScheduledTaskAction -Execute $venvPyw -Argument 'mgrserver.py' -WorkingDirectory $dir
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$triggers = @(
+    (New-ScheduledTaskTrigger -AtStartup),
+    (New-ScheduledTaskTrigger -AtLogOn -User $User),
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5))
+)
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
     -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $User -LogonType S4U -RunLevel Limited
 Register-ScheduledTask -TaskName $task -Description "Violations phone app server ($dir\mgrserver.py), port 8790." `
-    -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+    -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null
+
+$pAction = New-ScheduledTaskAction -Execute $venvPyw -Argument "`"$dir\print_queue.py`"" -WorkingDirectory $dir
+$pTriggers = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User $User),
+    (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1))
+)
+$pSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 30) -MultipleInstances IgnoreNew `
+    -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$pPrincipal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $printTask -Description "Prints notices queued by the Violations phone server ($dir\print_queue.py)." `
+    -Action $pAction -Trigger $pTriggers -Settings $pSettings -Principal $pPrincipal -Force | Out-Null
 Restart-Server
 
 # 7. Automatic updates from GitHub ------------------------------------------------------------

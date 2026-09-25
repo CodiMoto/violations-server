@@ -37,11 +37,14 @@ switched off without touching the others, and notes show who wrote them.
 1. In `C:\ViolationsServer`, right-click **install.ps1** → **Run with PowerShell**.
    (If Windows blocks it: open PowerShell and run
    `powershell -ExecutionPolicy Bypass -File C:\ViolationsServer\install.ps1`.)
-2. If Python isn't installed, it installs it — then **run install.ps1 again**.
-3. When asked, type the **Rent Manager username and password** from step 1,
+2. Windows asks *"Do you want to allow this app to make changes?"* — click
+   **Yes**. (It needs this to start the phone server with Windows, so it runs
+   even when nobody is signed in.)
+3. If Python isn't installed, it installs it — then **run install.ps1 again**.
+4. When asked, type the **Rent Manager username and password** from step 1,
    then the **manager's full name** (printed on notices) and a **username** for
    the phone (e.g. their first name).
-4. It sets everything up and finishes by opening **Violations Settings**. It
+5. It sets everything up and finishes by opening **Violations Settings**. It
    also puts a **Violations Settings** icon on the desktop.
 
 ## 4. Codi: connect the computer to Tailscale
@@ -121,8 +124,9 @@ needed if Violations Settings says to.
 | Violations Settings: "Phone server isn't running" | Restart the computer; if still red, run install.ps1 again. |
 | "Could not sign in to Rent Manager" | Delete `config.json` and run install.ps1 again to re-enter the login. Check **API Access** is ticked on the Rent Manager user. |
 | Password doesn't work on the phone | Set it again in Violations Settings and wait for the green ✓. |
-| Nothing prints | Violations Settings → Printer → Print a test page. Test mode never prints. |
+| Nothing prints | Violations Settings → Printer → Print a test page. Test mode never prints. Notices print only while the manager's Windows user is signed in (it can be locked); ones added while nobody is signed in print at the next sign-in. |
 | Updates: "Couldn't reach GitHub" | Is the computer online? It tries again every hour by itself. |
 
 Logs: `C:\ViolationsServer\data\violations\server.log` (phone server),
+`C:\ViolationsServer\data\violations\print.log` (printing),
 `C:\ViolationsServer\data\update.log` (updates).

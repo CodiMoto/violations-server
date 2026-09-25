@@ -491,7 +491,7 @@ def issue(conn, v, progress=None):
 
 # ---- printing -----------------------------------------------------------------
 
-SUMATRA = os.path.join(os.path.dirname(HERE), "tools", "SumatraPDF", "SumatraPDF.exe")
+SUMATRA = os.path.join(HERE, "tools", "SumatraPDF", "SumatraPDF.exe")
 
 
 def printers():
@@ -510,10 +510,50 @@ def print_pdf(pdf_bytes, printer, ref="print"):
         f.write(pdf_bytes)
     if not os.path.exists(SUMATRA):
         return {"ok": False, "error": "The print helper (SumatraPDF) isn't installed."}
+    if _session_id() == 0:
+        return _queue_print(path, printer, ref)
     r = subprocess.run([SUMATRA, "-print-to", printer, "-print-settings", "fit", "-silent", path],
                        capture_output=True, text=True, timeout=120, creationflags=0x08000000)
     return {"ok": r.returncode == 0, "printer": printer,
             "error": (r.stderr or r.stdout).strip()[:300] if r.returncode else None}
+
+
+# The phone server runs from Windows startup, outside anyone's sign-in, so it
+# keeps going when nobody is signed in. From there SumatraPDF reports success
+# but nothing reaches the printer (tested 2026-09-24). So it queues the job
+# and the "Violations Print" task (print_queue.py) prints it in the
+# signed-in session — straight away, or at the next sign-in.
+PRINT_QUEUE = os.path.join(DATA, "print-queue")
+PRINT_TASK = "Violations Print"
+
+
+def _session_id():
+    import ctypes
+    sid = ctypes.c_ulong()
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid))
+    return sid.value
+
+
+def _signed_in():
+    """Is this Windows user signed in (so the print task can run now)?"""
+    import subprocess
+    user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ.get('USERNAME', '')}"
+    r = subprocess.run(["tasklist", "/fi", "imagename eq explorer.exe", "/fi", f"username eq {user}",
+                        "/nh", "/fo", "csv"],
+                       capture_output=True, text=True, timeout=30, creationflags=0x08000000)
+    return "explorer.exe" in r.stdout.lower()
+
+
+def _queue_print(path, printer, ref):
+    import subprocess
+    os.makedirs(PRINT_QUEUE, exist_ok=True)
+    _write(os.path.join(PRINT_QUEUE, f"{ref}.json"), {"pdf": path, "printer": printer})
+    if not _signed_in():
+        return {"ok": False, "printer": printer, "queued": True,
+                "error": "nobody is signed in to the computer. It prints as soon as someone signs in."}
+    subprocess.run(["schtasks", "/run", "/tn", PRINT_TASK],
+                   capture_output=True, text=True, timeout=30, creationflags=0x08000000)
+    return {"ok": True, "printer": printer, "queued": True, "error": None}
 
 
 # ---- the deadline watcher -----------------------------------------------------
