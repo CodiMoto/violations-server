@@ -1,0 +1,12 @@
+# This computer's own settings and logins — never shared
+config.json
+violations_config.json
+# Tenant data, photos, notices, tokens, logs
+data/
+*.log
+.token*
+# Installed by install.ps1
+venv/
+tools/
+__pycache__/
+*.pyc

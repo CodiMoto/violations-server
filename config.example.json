@@ -1,0 +1,9 @@
+{
+  "_comment": "This computer's Rent Manager login \u2014 its OWN API user (Rent Manager > Users > this manager's API user, with 'API Access' ticked). Created by install.ps1; never committed to GitHub.",
+  "company": "twinpm",
+  "username": "PASTE_API_USERNAME",
+  "password": "PASTE_API_PASSWORD",
+  "location_id": 1,
+  "rate_floor": 25,
+  "page_size": 1000
+}

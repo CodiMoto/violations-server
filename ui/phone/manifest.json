@@ -1,0 +1,12 @@
+{
+  "name": "Twin Peaks Violations",
+  "short_name": "Violations",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F7F2E7",
+  "theme_color": "#2F2A26",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}

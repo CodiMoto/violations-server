@@ -1,0 +1,8 @@
+requests>=2.31
+pillow>=10.0
+pillow-heif>=0.16
+fpdf2>=2.7
+qrcode>=7.4
+# only needed where reminder emails are switched on (Codi's computer)
+google-api-python-client>=2.100
+google-auth>=2.23

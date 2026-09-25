@@ -1,0 +1,153 @@
+{
+  "_comment": "This computer's violations settings. Change them in Violations Settings (desktop icon) rather than by hand. Created from violations_config.example.json by install.ps1; never committed to GitHub.",
+  "mode": "test",
+  "_mode_help": "test = violations go onto the TEST prospect (Clippy Testapplicant DELETE ME), nothing prints, reminders are marked [TEST]. live = the real tenant's History & Notes, real printing, real reminders.",
+  "test_prospect_id": 85485,
+  "items": [
+    {
+      "id": "window_door",
+      "label": "Broken window/door",
+      "days": 10,
+      "rule": "next_monday",
+      "short": "Broken window / door"
+    },
+    {
+      "id": "coverings",
+      "label": "Window coverings (Blankets/towels etc)",
+      "days": 4,
+      "rule": "next_monday",
+      "short": "Blankets in windows"
+    },
+    {
+      "id": "skirting",
+      "label": "Skirting missing or damaged",
+      "days": 10,
+      "rule": "next_monday",
+      "short": "Skirting"
+    },
+    {
+      "id": "siding",
+      "label": "Siding missing or damaged",
+      "days": 10,
+      "rule": "next_monday",
+      "short": "Siding"
+    },
+    {
+      "id": "debris",
+      "label": "Debris in yard",
+      "days": 4,
+      "rule": "next_monday",
+      "short": "Debris in yard"
+    },
+    {
+      "id": "porch",
+      "label": "Unclean porch",
+      "days": 4,
+      "rule": "next_monday",
+      "short": "Unclean porch"
+    },
+    {
+      "id": "lawn",
+      "label": "Untidy lawn",
+      "days": 4,
+      "rule": "next_monday",
+      "short": "Untidy lawn"
+    },
+    {
+      "id": "grass_parking",
+      "label": "Parking in grass",
+      "days": 2,
+      "rule": "exact",
+      "short": "Parking in grass"
+    },
+    {
+      "id": "pet_unreg",
+      "label": "Unregistered pet",
+      "days": 7,
+      "rule": "exact",
+      "short": "Unregistered pet"
+    },
+    {
+      "id": "vehicles",
+      "label": "Too many vehicles (2 per home maximum)",
+      "days": 7,
+      "rule": "exact",
+      "short": "Too many vehicles"
+    },
+    {
+      "id": "signs",
+      "label": "Posting of signs is not allowed",
+      "days": 3,
+      "rule": "exact",
+      "short": "Signs posted"
+    },
+    {
+      "id": "shed",
+      "label": "Storage shed in disrepair",
+      "days": 10,
+      "rule": "next_monday",
+      "short": "Shed disrepair"
+    },
+    {
+      "id": "rv",
+      "label": "No motor homes/RVs in driveways",
+      "days": 3,
+      "rule": "exact",
+      "short": "Motor home / RV"
+    },
+    {
+      "id": "vehicle_unreg",
+      "label": "Unregistered vehicle",
+      "days": 7,
+      "rule": "exact",
+      "short": "Unregistered vehicle"
+    },
+    {
+      "id": "pet_chained",
+      "label": "Pet chained outside without owner at home",
+      "days": 1,
+      "rule": "exact",
+      "short": "Pet chained outside"
+    }
+  ],
+  "other": {
+    "days": 4,
+    "rule": "next_monday"
+  },
+  "_items_help": "Same checklist as the paper Violation Notice. days + rule: 'exact' = that many days later; 'next_monday' = that many days later, then on to the next Monday (4 days + next Monday always gives a full weekend and a Monday deadline, 4-10 days out). THESE ARE STARTING GUESSES - set the real ones on the Violations screen.",
+  "warning_levels": [
+    "Reminder",
+    "1",
+    "2",
+    "Final"
+  ],
+  "warning_lookback_days": 180,
+  "users": [
+    {
+      "username": "manager",
+      "name": "Park Manager",
+      "email": null,
+      "password_hash": null
+    }
+  ],
+  "_users_help": "The manager who signs in on the phone. Name is printed on notices ('By ...'). The password is set in Violations Settings and stored only as a salted hash.",
+  "printer": null,
+  "print_photos": false,
+  "_printer_help": "Windows printer name, or null to save the PDF without printing. print_photos adds the photo pages to the printout (they're always on the PDF saved to Rent Manager).",
+  "reminders": {
+    "email": false,
+    "email_me": null,
+    "email_writer": false,
+    "moornings": false,
+    "gmail_token": null,
+    "send_from_hour": 7,
+    "send_until_hour": 20,
+    "_help": "Manager computers: leave email off \u2014 overdue violations show at the top of the phone app. (Codi's own computer turns email + Moornings on.)"
+  },
+  "server": {
+    "port": 8790
+  },
+  "parks": [],
+  "_short_help": "short = the tile text on the phone; label = the full wording printed on the notice.",
+  "_parks_help": "Which parks this computer handles (ticked in Violations Settings). A manager with two parks gets a park choice on the lot screen."
+}

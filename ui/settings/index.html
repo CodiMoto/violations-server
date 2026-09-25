@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Violations Settings</title>
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<header><h1>Violations Settings</h1><p>This computer's violations server — only this computer can open this page.</p></header>
+<main>
+  <section class="card" id="status">
+    <h2>Is everything running?</h2>
+    <ul class="checks" id="checks"><li>Checking…</li></ul>
+    <div id="phone"></div>
+  </section>
+
+  <section class="card">
+    <h2>You</h2>
+    <div class="grid2">
+      <label>Your name (printed on notices as “By …”)<input id="name" maxlength="60"></label>
+      <label>Username for the phone<input id="username" maxlength="32" autocapitalize="none"></label>
+    </div>
+    <button class="btn" id="saveYou">Save</button> <span class="msg" id="youMsg"></span>
+    <div class="row">
+      <label class="grow">Phone password (12+ characters — a short sentence works well)
+        <input type="password" id="pw" autocomplete="new-password"></label>
+      <button class="btn" id="savePw">Set password</button>
+    </div>
+    <p class="msg" id="pwMsg"></p>
+  </section>
+
+  <section class="card">
+    <h2>Parks this computer handles</h2>
+    <div id="parks" class="parks">Checking Rent Manager…</div>
+  </section>
+
+  <section class="card">
+    <h2>Test or live</h2>
+    <div id="mode"></div>
+  </section>
+
+  <section class="card">
+    <h2>Printer</h2>
+    <div class="row">
+      <select id="printer"><option value="">Don't print — just save the PDF</option></select>
+      <label class="check"><input type="checkbox" id="printPhotos"> print the photo pages too</label>
+      <button class="btn ghost" id="testPrint">Print a test page</button>
+    </div>
+    <p class="msg" id="printMsg"></p>
+  </section>
+
+  <section class="card">
+    <h2>How long residents get <button class="btn" id="saveItems">Save</button></h2>
+    <p class="hint">“then next Monday” moves the deadline on to the following Monday, so a weekend is always included.
+      The last column is the date a notice written today would give. When several are ticked, the notice uses the latest.</p>
+    <table id="items"></table>
+  </section>
+
+  <section class="card">
+    <h2>Updates <button class="btn ghost" id="updNow">Check for updates now</button></h2>
+    <p class="hint">New versions from Codi are put in by themselves (checked every hour, once nobody has used the phone app
+      for 10 minutes). This computer's login, password, parks, printer and deadlines are never changed by an update.</p>
+    <div id="upd">Checking…</div>
+  </section>
+
+  <section class="card">
+    <h2>Recent notices from this computer</h2>
+    <div id="recent" class="hint">None yet.</div>
+  </section>
+</main>
+<script src="settings.js"></script>
+</body>
+</html>

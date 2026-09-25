@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#2F2A26">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Violations">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Violations</title>
+<link rel="stylesheet" href="phone.css">
+</head>
+<body>
+<!-- Codi, 2026-09-24: "scrolling should never be required on the phone".
+     The whole app is one screen tall; each step is laid out to fit, long
+     lists page instead of scroll, and the lot is typed on a keypad. -->
+<div class="app">
+<header class="bar">
+  <button class="barbtn" id="backBtn" hidden aria-label="Back">‹</button>
+  <span class="logo" id="logo" aria-hidden="true">!</span>
+  <h1 id="title">Violations</h1>
+  <span class="who" id="who"></span>
+</header>
+<div class="testbanner" id="testBanner" hidden>TEST MODE — goes on the test record, nothing prints</div>
+<div class="stepbar" id="stepBar" hidden><span id="stepText"></span><div class="dots" id="dots"></div></div>
+
+<!-- sign in -->
+<main id="signin" class="screen" hidden>
+  <form id="signinForm" class="card">
+    <h2>Sign in</h2>
+    <label>Username <input id="user" autocomplete="username" autocapitalize="none" required></label>
+    <label>Password <input id="pass" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary big" type="submit">Sign in</button>
+    <p class="err" id="signinErr"></p>
+  </form>
+</main>
+
+<!-- home: active violations, paged to fit -->
+<main id="home" class="screen" hidden>
+  <button class="btn add" id="addBtn">＋ Add a violation</button>
+  <div id="resume"></div>
+  <div class="listhead"><h2>Active <span class="muted" id="parkName"></span></h2>
+    <div class="pager" id="pager" hidden><button class="pbtn" id="prevPage" aria-label="Previous">‹</button><span id="pageText"></span><button class="pbtn" id="nextPage" aria-label="Next">›</button></div></div>
+  <div class="fill" id="active"><p class="muted">Loading…</p></div>
+</main>
+
+<!-- step 1: photo -->
+<main id="s-photo" class="screen" hidden>
+  <div class="viewfinder fill" id="vfWrap">
+    <video id="viewfinder" playsinline autoplay muted></video>
+    <p class="vfmsg" id="vfMsg">Starting the camera…</p>
+  </div>
+  <button class="shutter" id="shutter" disabled aria-label="Take photo"><span></span></button>
+  <p class="muted center small" id="photoMsg"></p>
+  <div class="row center links">
+    <label class="link">Phone's camera app
+      <input type="file" id="camera" accept="image/*" capture="environment" hidden></label>
+    <label class="link">Photo already taken
+      <input type="file" id="library" accept="image/*" hidden></label>
+  </div>
+</main>
+
+<!-- step 2: circle the issue -->
+<main id="s-circle" class="screen" hidden>
+  <p class="hint center">Draw a circle around the problem.</p>
+  <div class="canvaswrap fill" id="canvasWrap"><canvas id="canvas"></canvas></div>
+  <div class="row">
+    <button class="btn grow" id="undoBtn">Undo</button>
+    <button class="btn grow" id="clearBtn">Start over</button>
+    <button class="btn grow" id="retakeBtn">New photo</button>
+  </div>
+  <button class="btn primary big full" id="circleNext" disabled>Next</button>
+</main>
+
+<!-- step 3: lot, on a keypad -->
+<main id="s-lot" class="screen" hidden>
+  <div class="parkpick" id="parkPick" hidden></div>
+  <div class="lotshow">
+    <div class="lotnum" id="lotNum"><span class="muted">Lot</span> <b id="lotDigits">–</b></div>
+    <div class="lotwho" id="lotWho">Type the lot number</div>
+  </div>
+  <div class="keypad fill" id="keypad">
+    <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+    <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+    <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+    <button data-k="del" aria-label="Delete">⌫</button><button data-k="0">0</button><button data-k="clr" aria-label="Clear">C</button>
+  </div>
+  <button class="btn primary big full" id="lotNext" disabled>Next</button>
+</main>
+
+<!-- step 4: what's wrong (tiles) -->
+<main id="s-items" class="screen" hidden>
+  <div class="who2" id="itemsWho"></div>
+  <div class="tiles fill" id="tiles"></div>
+  <button class="btn primary big full" id="itemsNext" disabled>Next</button>
+</main>
+
+<!-- step 4b: something else (typed) -->
+<main id="s-other" class="screen" hidden>
+  <h2>Something else</h2>
+  <p class="muted small">Up to two, in a few words each. They're printed on the notice.</p>
+  <input class="other" id="other1" placeholder="e.g. Trampoline on the road" maxlength="60">
+  <input class="other" id="other2" placeholder="(optional second one)" maxlength="60">
+  <button class="btn primary big full" id="otherDone">Done</button>
+</main>
+
+<!-- step 5: warning & send -->
+<main id="s-send" class="screen" hidden>
+  <div class="summary" id="sendSummary"></div>
+  <div>
+    <div class="levels" id="levels"></div>
+    <p class="hint" id="suggestWhy"></p>
+  </div>
+  <input id="notes" maxlength="300" placeholder="Note for the resident (optional)">
+  <div class="due" id="due"></div>
+  <button class="btn primary big full" id="issueBtn" disabled>Issue violation</button>
+  <p class="err" id="issueErr"></p>
+</main>
+
+<!-- "It's fixed": photo of the fix -->
+<main id="s-fix" class="screen" hidden>
+  <div class="summary" id="fixWho"></div>
+  <div class="viewfinder fill">
+    <video id="fixVideo" playsinline autoplay muted></video>
+    <p class="vfmsg" id="fixMsg">Starting the camera…</p>
+  </div>
+  <button class="shutter" id="fixShutter" disabled aria-label="Take photo of the fix"><span></span></button>
+  <div class="row center links">
+    <label class="link">Photo already taken
+      <input type="file" id="fixLibrary" accept="image/*" hidden></label>
+    <button class="link" id="fixNoPhoto">No photo</button>
+  </div>
+</main>
+
+<!-- "It's fixed": check and save -->
+<main id="s-fixok" class="screen" hidden>
+  <div class="summary" id="fixWho2"></div>
+  <div class="canvaswrap fill"><img id="fixPreview" alt="Photo of the fix"><p class="vfmsg" id="fixNoPic" hidden>No photo</p></div>
+  <div class="row">
+    <button class="btn grow" id="fixRetake">Retake</button>
+    <button class="btn primary grow big" id="fixSave">Save — it's fixed</button>
+  </div>
+  <p class="err" id="fixErr"></p>
+</main>
+
+<!-- sending / done -->
+<main id="done" class="screen" hidden>
+  <h2 id="doneTitle">Sending…</h2>
+  <ul class="steps" id="steps"></ul>
+  <div id="doneBody"></div>
+  <span class="fill"></span>
+  <button class="btn primary big full" id="homeBtn" hidden>Back to violations</button>
+</main>
+
+<nav class="foot" id="foot" hidden>
+  <button class="link" id="cancelBtn" hidden>Cancel this violation</button>
+  <span></span>
+  <button class="link" id="signout">Sign out</button>
+</nav>
+</div>
+<script src="phone.js"></script>
+</body>
+</html>
