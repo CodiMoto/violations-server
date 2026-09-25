@@ -1,7 +1,7 @@
 # Setting up a manager's computer
 
-About 20 minutes per computer. Codi does steps 1 and 4 (they need her
-accounts); the rest can be done at the manager's
+About 20 minutes per computer. Codi does step 1 and the Tailscale sign-in in
+step 3 (they need her accounts); the rest can be done at the manager's
 computer. After that, **new versions install themselves** — see
 [Updates](#updates).
 
@@ -34,44 +34,30 @@ switched off without touching the others, and notes show who wrote them.
 
 ## 3. Run the installer
 
+It installs everything the program needs that isn't already there — Python,
+the printing helper and Tailscale (what lets the phone reach the computer from
+anywhere, Wi-Fi or cellular, with nothing installed on the phone).
+
 1. In `C:\ViolationsServer`, right-click **install.ps1** → **Run with PowerShell**.
    (If Windows blocks it: open PowerShell and run
    `powershell -ExecutionPolicy Bypass -File C:\ViolationsServer\install.ps1`.)
 2. Windows asks *"Do you want to allow this app to make changes?"* — click
-   **Yes**. (It needs this to start the phone server with Windows, so it runs
-   even when nobody is signed in.)
-3. If Python isn't installed, it installs it — then **run install.ps1 again**.
-4. When asked, type the **Rent Manager username and password** from step 1,
+   **Yes**.
+3. When asked, type the **Rent Manager username and password** from step 1,
    then the **manager's full name** (printed on notices) and a **username** for
    the phone (e.g. their first name).
-5. It sets everything up and finishes by opening **Violations Settings**. It
-   also puts a **Violations Settings** icon on the desktop.
+4. **Tailscale — Codi:** type a short name for the phone address (e.g.
+   `morristown` → `https://morristown.<your-tailnet>.ts.net`). A sign-in page
+   opens: **sign in with the company Tailscale account** and approve the
+   computer. The installer then turns on the phone address by itself.
+5. It finishes by opening **Violations Settings**, and puts a **Violations
+   Settings** icon on the desktop.
 
-## 4. Codi: connect the computer to Tailscale
+If anything goes wrong part-way (no internet, a sign-in closed too early),
+just run **install.ps1** again — it picks up where it left off and keeps
+everything already set.
 
-This is what lets the phone reach the computer from anywhere — Wi-Fi or
-cellular — with nothing installed on the phone.
-
-1. On the manager's computer, download Tailscale from
-   <https://tailscale.com/download/windows> and install it.
-2. Open Tailscale from the Start menu and **sign in with the company Tailscale
-   account** (the one Codi uses). Approve the computer if it asks.
-3. In the Tailscale admin page (<https://login.tailscale.com/admin/machines>)
-   rename the computer to something clear, e.g. `joplin-office` — that becomes
-   the phone address: `https://joplin-office.<your-tailnet>.ts.net`.
-
-## 5. Turn on the phone address
-
-Open **PowerShell** and run, once:
-
-```
-& "C:\Program Files\Tailscale\tailscale.exe" funnel --bg 8790
-```
-
-It should say *Available on the internet: https://…ts.net/*. It stays on
-after restarts.
-
-## 6. Finish in Violations Settings
+## 4. Finish in Violations Settings
 
 Open **Violations Settings** from the desktop. Everything at the top should be
 green. Then:
@@ -82,7 +68,7 @@ green. Then:
 3. **Printer** — pick it, then **Print a test page**.
 4. **How long residents get** — check the deadlines; **Save**.
 
-## 7. The phone
+## 5. The phone
 
 1. Scan the QR code on the Violations Settings page with the phone's camera
    (or type the address).
@@ -91,7 +77,7 @@ green. Then:
    **⋮ → Add to Home screen**.
 4. The first time you take a photo, allow the camera.
 
-## 8. Test, then go live
+## 6. Test, then go live
 
 It starts in **TEST** mode — notices go on a test record in Rent Manager and
 nothing prints. Try a couple end to end. When happy, **Go live** in Violations

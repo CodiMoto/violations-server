@@ -19,9 +19,9 @@ function renderChecks(rm) {
   const t = d.tailscale, items = [
     [d.rm_set_up && rm.ok, rm.ok ? "Connected to Rent Manager" : `Rent Manager: ${rm.error || "not set up — run install.ps1"}`],
     [d.server_up, d.server_up ? "Phone server is running" : "Phone server isn't running — restart the computer, or run install.ps1 again"],
-    [t.installed, t.installed ? "Tailscale is installed" : "Tailscale isn't installed — see SETUP.md step 3"],
+    [t.installed, t.installed ? "Tailscale is installed" : "Tailscale isn't installed — run install.ps1 again"],
     [t.signed_in, t.signed_in ? "Tailscale is signed in" : "Tailscale isn't signed in — open Tailscale from the Start menu and sign in"],
-    [!!t.url, t.url ? "The phone can reach this computer from anywhere" : "Funnel isn't on — see SETUP.md step 4"],
+    [!!t.url, t.url ? "The phone can reach this computer from anywhere" : "The phone address (Funnel) isn't on — run install.ps1 again"],
     [d.user.has_password, d.user.has_password ? "A phone password is set" : "No phone password yet — set one below"],
     [d.parks.length > 0, d.parks.length ? `Parks: ${d.parks.join(", ")}` : "No park picked yet — tick one below"],
   ];

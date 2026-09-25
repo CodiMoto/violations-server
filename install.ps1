@@ -1,5 +1,9 @@
 ﻿# Violations Server - install or update on a manager's computer.
 #
+# Installs everything it needs that isn't there yet: Python, the Python libraries,
+# SumatraPDF (silent printing) and Tailscale (the phone address) - then signs this
+# computer in to Tailscale and turns on Funnel.
+#
 #   Right-click this file > "Run with PowerShell"   (or: powershell -ExecutionPolicy Bypass -File install.ps1)
 #
 # Safe to run again at any time (after downloading a new version, too): it keeps
@@ -54,36 +58,57 @@ if (-not $isAdmin) {
     exit 0
 }
 
+# This runs in its own window: on any error, say what happened instead of vanishing.
+trap {
+    Write-Host "`nSomething went wrong: $_" -ForegroundColor Red
+    Write-Host 'Fix that (often: check the internet connection) and run install.ps1 again - it keeps what is already done.'
+    Read-Host 'Press Enter to close'
+    exit 1
+}
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$ProgressPreference = 'SilentlyContinue'     # Windows PowerShell downloads crawl with the progress bar on
+
+function Get-File($url, $name) {
+    $out = Join-Path $env:TEMP $name
+    Write-Host "Downloading $url ..."
+    Invoke-WebRequest $url -OutFile $out -UseBasicParsing
+    return $out
+}
+
 Write-Host 'Violations Server setup' -ForegroundColor White
 Write-Host "Folder: $dir"
 
 # 1. Python ---------------------------------------------------------------------------
+#    Installed for all users (C:\Program Files), because the phone server runs as a
+#    scheduled task that must be able to reach it whoever is signed in.
 Say 'Python'
-$py = $null; $pyArgs = @()
-foreach ($cand in @(@{exe = 'py'; args = @('-3')}, @{exe = 'python'; args = @()})) {
-    try {
-        $v = & $cand.exe @($cand.args) -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
-        if ($v -and [version]"$v" -ge [version]'3.10') { $py = $cand.exe; $pyArgs = $cand.args; break }
-    } catch { }
+function Find-Python {
+    Get-ChildItem "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Directory.Name -match '^Python3(\d+)$' -and [int]$Matches[1] -ge 10 } |
+        Sort-Object { [int]($_.Directory.Name -replace 'Python3', '') } -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
 }
-if (-not $py) {
-    Write-Host 'Python 3.10 or newer is not installed.' -ForegroundColor Yellow
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host 'Installing Python 3.12 with winget (Windows may ask for permission)...'
-        winget install --id Python.Python.3.12 -e --scope user --accept-package-agreements --accept-source-agreements
-        Write-Host 'Python installed. Close this window and run install.ps1 again.' -ForegroundColor Green
-    } else {
-        Write-Host 'Install it from https://www.python.org/downloads/ (tick "Add python.exe to PATH"), then run install.ps1 again.'
+$py = Find-Python
+if (-not $py -and -not (Test-Path $venvPy)) {
+    Write-Host 'Python is not installed for all users - installing Python 3.12 (a few minutes)...'
+    $exe = Get-File 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' 'python-3.12.10-amd64.exe'
+    $p = Start-Process $exe -Wait -PassThru -ArgumentList '/quiet', 'InstallAllUsers=1', 'PrependPath=1', 'Include_test=0'
+    Remove-Item $exe -ErrorAction SilentlyContinue
+    $py = Find-Python
+    if (-not $py) {
+        Write-Host "Python didn't install (code $($p.ExitCode)). Install Python 3.12 from https://www.python.org/downloads/ -" -ForegroundColor Yellow
+        Write-Host '"Customize installation" > tick "Install Python for all users" - then run install.ps1 again.' -ForegroundColor Yellow
+        Read-Host 'Press Enter to close'
+        exit 1
     }
-    Read-Host 'Press Enter to close'
-    exit 1
 }
-Write-Host "Using $py"
+if ($py) { Write-Host "Using $py" -ForegroundColor Green } else { Write-Host 'Using the Python already set up in this folder.' -ForegroundColor Green }
 
 # 2. Its own copy of the libraries ---------------------------------------------------------
 Say 'Libraries'
 if (-not (Test-Path $venvPy)) {
-    & $py @pyArgs -m venv (Join-Path $dir 'venv')
+    & $py -m venv (Join-Path $dir 'venv')
 }
 & $venvPy -m pip install --quiet --disable-pip-version-check --upgrade pip
 & $venvPy -m pip install --quiet --disable-pip-version-check -r (Join-Path $dir 'requirements.txt')
@@ -186,7 +211,10 @@ if (Test-Path (Join-Path $dir '.git')) {
 
 # 8. Desktop shortcut to Violations Settings ------------------------------------------------------
 Say 'Desktop shortcut'
-$lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Violations Settings.lnk'
+# On the shared desktop: this window may be running as a different (administrator) user.
+$lnk = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Violations Settings.lnk'
+$old = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Violations Settings.lnk'   # where older versions put it
+if ((Test-Path $old) -and $old -ne $lnk) { Remove-Item $old -ErrorAction SilentlyContinue }
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
 $s.TargetPath = $venvPyw
 $s.Arguments = "`"$dir\settings_app.py`""
@@ -196,18 +224,54 @@ $s.Description = 'Violations Server settings'
 $s.Save()
 Write-Host "Made 'Violations Settings' on the desktop." -ForegroundColor Green
 
-# 9. Tailscale (lets the phone reach this computer from anywhere) -----------------------------------
+# 9. Tailscale: the phone address (https://<name>.<tailnet>.ts.net) that works from anywhere -------
 Say 'Tailscale'
 $ts = 'C:\Program Files\Tailscale\tailscale.exe'
 if (-not (Test-Path $ts)) {
-    Write-Host 'Tailscale is not installed yet - see SETUP.md step 4.' -ForegroundColor Yellow
+    Write-Host 'Installing Tailscale...'
+    $msi = Get-File 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' 'tailscale-setup.msi'
+    Start-Process msiexec.exe -Wait -ArgumentList '/i', "`"$msi`"", '/quiet', '/norestart'
+    Remove-Item $msi -ErrorAction SilentlyContinue
+    for ($i = 0; $i -lt 20 -and -not (Test-Path $ts); $i++) { Start-Sleep 1 }
+}
+if (-not (Test-Path $ts)) {
+    Write-Host "Tailscale didn't install - install it from https://tailscale.com/download/windows and run install.ps1 again." -ForegroundColor Yellow
 } else {
-    $funnel = & $ts funnel status 2>&1 | Out-String
-    if ($funnel -match 'Funnel on') {
-        Write-Host 'Tailscale Funnel is on.' -ForegroundColor Green
+    $ErrorActionPreference = 'Continue'
+    Start-Sleep 3                                 # give the Tailscale service a moment to start
+    $state = (& $ts status --json 2>$null | Out-String | ConvertFrom-Json -ErrorAction SilentlyContinue).BackendState
+    if ($state -ne 'Running') {
+        Write-Host ''
+        Write-Host "Sign this computer in to Tailscale with the COMPANY account (the one Codi uses)." -ForegroundColor White
+        $hn = Read-Host "Short name for this computer's phone address, e.g. morristown (Enter = keep '$env:COMPUTERNAME')"
+        $hn = ($hn.ToLower() -replace '[^a-z0-9-]', '-').Trim('-')
+        Write-Host 'A sign-in page opens in the browser (if not, hold Ctrl and click the address below).'
+        Write-Host 'Waiting for the sign-in to finish...'
+        # --unattended: keep Tailscale connected when nobody is signed in to Windows, like the phone server.
+        $upArgs = @('up', '--unattended')
+        if ($hn) { $upArgs += "--hostname=$hn" }
+        & $ts @upArgs
     } else {
-        Write-Host 'Tailscale is installed but Funnel is not on - see SETUP.md step 5.' -ForegroundColor Yellow
+        & $ts set --unattended 2>&1 | Out-Null
     }
+    $state = (& $ts status --json 2>$null | Out-String | ConvertFrom-Json -ErrorAction SilentlyContinue).BackendState
+    if ($state -eq 'Running') {
+        Write-Host 'Tailscale is signed in.' -ForegroundColor Green
+        $funnel = & $ts funnel status 2>&1 | Out-String
+        if ($funnel -notmatch 'Funnel on') {
+            Write-Host 'Turning on Funnel (the phone address)...'
+            & $ts funnel --bg 8790
+        }
+        $funnel = & $ts funnel status 2>&1 | Out-String
+        if ($funnel -match 'Funnel on') {
+            Write-Host 'Funnel is on - the phone can reach this computer from anywhere.' -ForegroundColor Green
+        } else {
+            Write-Host "Funnel isn't on. If a web address was shown above, Codi opens it to allow Funnel, then run install.ps1 again." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Tailscale isn't signed in yet - run install.ps1 again to finish." -ForegroundColor Yellow
+    }
+    $ErrorActionPreference = 'Stop'
 }
 
 Say 'All done'
