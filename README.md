@@ -41,6 +41,13 @@ deadlines. Tapping **It's fixed** adds a "fixed" note with a photo of the fix.
   where Windows printing silently does nothing, so it queues each notice and
   the *Violations Print* task prints it in the signed-in session — at once, or
   at the next sign-in.
+- **Late notices** (`latenotices.py`). When Rent Manager posts the month's
+  late fees, every tenant it charged one gets this park's late-notice letter
+  template and a ledger (the *Statement - 8.5x11* report from the day after
+  they were last at $0) — both made by Rent Manager itself — printed in lot
+  order, plus a *Delinquency* history note with both attached. Off until a
+  park's template is chosen (`late_notices.letter_template_id`): the notice
+  is state law.
 - **Updates itself.** `updater.py` runs hourly on each manager's computer
   (public repository — no GitHub account or key needed):
   a push to `main` reaches every computer within the hour, once its tests pass
@@ -95,6 +102,7 @@ A push to `main` **is** a release to every park. So:
 | `drafts.py` | puts a received violation's photo, circle and lot together |
 | `settings_app.py` | Violations Settings page |
 | `print_queue.py` | prints queued notices in the signed-in session |
+| `latenotices.py` | late notice + ledger for each late tenant when late fees post |
 | `rmconn.py`, `rmclient.py` | Rent Manager API (token re-use, rate limits) |
 | `imaging.py` | phone photos incl. iPhone HEIC |
 | `notify.py` | reminder email (only where switched on) |
