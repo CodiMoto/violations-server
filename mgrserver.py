@@ -385,16 +385,18 @@ def reminder_loop():
 
 
 def late_notice_loop():
-    """Every 15 minutes: has Rent Manager posted this month's late fees? (latenotices.py)"""
+    """Every hour from the 6th: has Rent Manager posted this month's late fees? (latenotices.py)"""
     time.sleep(60)
     while True:
+        wait = 3600
         try:
             r = latenotices.check(say=log)
-            if r.get("done"):
+            if r.get("done") or r.get("recheck_in"):
                 log(f"late notices: {r['result']}")
+            wait = r.get("recheck_in") or wait
         except Exception:
             log("late notice check failed\n" + traceback.format_exc())
-        time.sleep(900)
+        time.sleep(wait)
 
 
 def main():

@@ -69,3 +69,37 @@ class WhoAndWhen(unittest.TestCase):
         self.assertIn("14 day late notice (MN) printed", t)
         self.assertIn("$649.10", t)
         self.assertIn("[Clippy late notice 2026-10]", t)
+
+
+class Schedule(unittest.TestCase):
+    """When it looks at Rent Manager at all (no Rent Manager needed for these)."""
+
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        self.dir = tempfile.mkdtemp()
+        cfg = {"mode": "live", "late_notices": {"letter_template_id": 1431, "start_day": 6}}
+        self.patches = [mock.patch.object(L.V, "load_config", lambda: cfg),
+                        mock.patch.object(L, "STATE", os.path.join(self.dir, "state.json"))]
+        for p in self.patches:
+            p.start()
+        self.cfg = cfg
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_nothing_before_the_6th(self):
+        from datetime import datetime
+        r = L.check(conn=object(), now=datetime(2026, 10, 5, 23, 0))
+        self.assertIn("waiting for the 6th", r["result"])
+
+    def test_finished_month_is_not_checked_again(self):
+        from datetime import datetime
+        L.V._write(L.STATE, {"finished": {"2026-10": "2026-10-08T15:40:00"}})
+        r = L.check(conn=object(), now=datetime(2026, 10, 20, 9, 0))   # object(): any Rent Manager call would fail
+        self.assertIn("finished for 2026-10", r["result"])
+
+    def test_off_without_a_template(self):
+        self.cfg["late_notices"]["letter_template_id"] = None
+        self.assertIn("off", L.check(conn=object())["result"])

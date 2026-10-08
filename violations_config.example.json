@@ -154,7 +154,9 @@
     "letter_template_id": null,
     "statement_report_id": 284,
     "late_charge_type_id": 10,
-    "history_category_id": 4
+    "history_category_id": 4,
+    "start_day": 6,
+    "confirm_minutes": 10
   },
-  "_late_notices_help": "When Rent Manager posts the month's late fees, print each late tenant's late notice (this letter template, merged by Rent Manager) and ledger (Statement 8.5x11 from the last zero balance), and add a Delinquency note with both. Off until letter_template_id is set - the notice is state law, so choose this park's state's template (Morristown MN: 1431 '14 day late notice (MN)')."
+  "_late_notices_help": "From the 6th (start_day), checked hourly: when Rent Manager posts the month's late fees, print each late tenant's late notice (this letter template, merged by Rent Manager) and ledger (Statement 8.5x11 from the last zero balance), and add a Delinquency note with both. Off until letter_template_id is set - the notice is state law, so choose this park's state's template (Morristown MN: 1431 '14 day late notice (MN)')."
 }

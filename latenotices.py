@@ -12,9 +12,11 @@ Who gets one: tenants Rent Manager charged a late fee (charge type LC) this
 month — so its own late-fee rules and exemptions decide (Codi, 2026-10-08).
 A tenant who has paid in full by the time it runs is skipped.
 
-When: the server checks every 15 minutes. Once this month's late fees are in
-and two checks in a row see the same ones (the posting run is finished), it
-prints the notices in lot order: notice, then ledger. Each tenant once a month.
+When: from the 6th of the month the server checks once an hour until the
+month's late fees have been posted. When they appear it looks again 10 minutes
+later; if no more were added (the posting run is finished) it prints everything
+in lot order - notice, then ledger - and is done until next month. Each tenant
+once a month; a tenant that failed is retried at the next hourly check.
 
 The notice text is state law, so a park only gets this when its letter
 template is chosen in violations_config.json (late_notices.letter_template_id).
@@ -71,7 +73,7 @@ def fingerprint(charges):
 def due(charges, done, seen_before):
     """From this month's late charges: tenant IDs still to do, or None while Rent
     Manager may still be posting them. Finished = the same late charges as at the
-    previous check (15 minutes earlier). Rent Manager's own timestamps are in its
+    previous check (10 minutes earlier). Rent Manager's own timestamps are in its
     server's time zone, so they can't be compared with this computer's clock."""
     if not charges:
         return []
@@ -185,16 +187,25 @@ def one(conn, cfg, s, month, tenant_id, property_id, lot, template_name, say=pri
 # ---- the monthly run -------------------------------------------------------------
 
 def check(conn=None, say=print, now=None):
-    """Run by the phone server every 15 minutes. Returns what it did."""
+    """Run by the phone server every hour (see late_notice_loop). From the 6th
+    (start_day) it looks for this month's late fees until they have been posted;
+    when they appear it asks to be run again in confirm_minutes, prints everything
+    once they haven't changed, and is then finished for the month. Returns what it
+    did; "recheck_in" (seconds) = run me again sooner than the hour."""
     cfg = V.load_config()
     s = settings(cfg)
     if not s.get("letter_template_id"):
         return {"result": "off (no letter template chosen for this park)"}
     now = now or datetime.now()
+    if now.day < s.get("start_day", 6):
+        return {"result": f"waiting for the {s.get('start_day', 6)}th"}
     month = f"{now:%Y-%m}"
     state = V._read(STATE, {})
     # Test runs are kept apart, so going live later in the month still prints everyone.
-    done = state.setdefault(month if cfg["mode"] == "live" else f"{month} test", {})
+    key = month if cfg["mode"] == "live" else f"{month} test"
+    if state.get("finished", {}).get(key):
+        return {"result": f"finished for {month}"}
+    done = state.setdefault(key, {})
     conn = conn or rmconn.Connection("live" if cfg["mode"] == "live" else "practice")
 
     props = conn.get("Properties", {"fields": "PropertyID,ShortName"}) or []
@@ -206,14 +217,20 @@ def check(conn=None, say=print, now=None):
                            f"TransactionDate,ge,{now:%Y-%m}-01",
         fields="ChargeID,AccountID,AccountType,PropertyID,UnitID,Amount,CreateDate")
         if c.get("PropertyID") in props]
+    if not charges:
+        return {"result": f"no late fees posted yet for {month}"}
     seen = state.setdefault("seen", {})
-    todo = due(charges, done, seen.get(month))
+    todo = due(charges, done, seen.get(key))
     if todo is None:
-        seen[month] = fingerprint(charges)
+        seen[key] = fingerprint(charges)
         V._write(STATE, state)
-        return {"result": f"{len(charges)} late fee(s) posted - printing at the next check if no more are added"}
+        wait = s.get("confirm_minutes", 10)
+        return {"result": f"{len(charges)} late fee(s) posted - printing in {wait} minutes if no more are added",
+                "recheck_in": wait * 60}
     if not todo:
-        return {"result": f"nothing to do ({len(done)} done this month)"}
+        state.setdefault("finished", {})[key] = datetime.now().isoformat(timespec="seconds")
+        V._write(STATE, state)
+        return {"result": f"finished for {month} ({len(done)} tenant(s))"}
 
     units = {}
     for pid in {c["PropertyID"] for c in charges}:
@@ -241,6 +258,9 @@ def check(conn=None, say=print, now=None):
         done[str(tid)] = rec
         V._write(STATE, state)            # saved after each one: a restart never prints twice
         did.append(rec)
+    if len(did) == len(todo):             # everyone done: no more checks until next month
+        state.setdefault("finished", {})[key] = datetime.now().isoformat(timespec="seconds")
+        V._write(STATE, state)
     return {"result": f"{len(did)} of {len(todo)} done", "done": did}
 
 
