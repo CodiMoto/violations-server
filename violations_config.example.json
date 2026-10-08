@@ -142,12 +142,21 @@
     "gmail_token": null,
     "send_from_hour": 7,
     "send_until_hour": 20,
-    "_help": "Manager computers: leave email off \u2014 overdue violations show at the top of the phone app. (Codi's own computer turns email + Moornings on.)"
+    "_help": "Manager computers: leave email off — overdue violations show at the top of the phone app. (Codi's own computer turns email + Moornings on.)"
   },
   "server": {
     "port": 8790
   },
   "parks": [],
   "_short_help": "short = the tile text on the phone; label = the full wording printed on the notice.",
-  "_parks_help": "Which parks this computer handles (ticked in Violations Settings). A manager with two parks gets a park choice on the lot screen."
+  "_parks_help": "Which parks this computer handles (ticked in Violations Settings). A manager with two parks gets a park choice on the lot screen.",
+  "late_notices": {
+    "letter_template_id": null,
+    "statement_report_id": 284,
+    "late_charge_type_id": 10,
+    "history_category_id": 4,
+    "start_day": 6,
+    "confirm_minutes": 10
+  },
+  "_late_notices_help": "From the 6th (start_day), checked hourly: when Rent Manager posts the month's late fees, print each late tenant's late notice (this letter template, merged by Rent Manager) and ledger (Statement 8.5x11 from the last zero balance), and add a Delinquency note with both. Off until letter_template_id is set - the notice is state law, so choose this park's state's template (Morristown MN: 1431 '14 day late notice (MN)')."
 }

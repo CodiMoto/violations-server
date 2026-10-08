@@ -102,6 +102,20 @@ checked, and has **Check for updates now**.
 Running **install.ps1** again is always safe too (it keeps everything) — only
 needed if Violations Settings says to.
 
+## Late notices
+
+Off until this park's late-notice template is chosen — the wording is state
+law. In `C:\ViolationsServer\violations_config.json`, set
+`late_notices` → `letter_template_id` to the Rent Manager letter template
+for the park's state (Morristown, MN: `1431`, *14 day late notice (MN)*).
+
+From then on it checks hourly from the 6th of each month. Within about an hour
+of Rent Manager posting the month's late fees, each tenant charged one gets the notice and their ledger printed (lot
+order, notice then ledger) and a *Delinquency* note on their account with
+both attached. Each tenant once a month; anyone who has paid by then is
+skipped. Test mode makes the documents but prints and writes nothing.
+Copies: `C:\ViolationsServer\data\late\pdf`.
+
 ## If something's wrong
 
 | What you see | What to do |

@@ -41,6 +41,7 @@ sys.path.insert(0, HERE)
 import rmconn  # noqa: E402
 import updater  # noqa: E402
 import violations as V  # noqa: E402
+import latenotices  # noqa: E402
 import inbox  # noqa: E402
 
 PHONE_UI = os.path.join(HERE, "ui", "phone")
@@ -383,6 +384,21 @@ def reminder_loop():
         time.sleep(1800)
 
 
+def late_notice_loop():
+    """Every hour from the 6th: has Rent Manager posted this month's late fees? (latenotices.py)"""
+    time.sleep(60)
+    while True:
+        wait = 3600
+        try:
+            r = latenotices.check(say=log)
+            if r.get("done") or r.get("recheck_in"):
+                log(f"late notices: {r['result']}")
+            wait = r.get("recheck_in") or wait
+        except Exception:
+            log("late notice check failed\n" + traceback.format_exc())
+        time.sleep(wait)
+
+
 def main():
     cfg = V.load_config()
     port = cfg["server"]["port"]
@@ -397,6 +413,7 @@ def main():
     inbox.recover()
     if "--no-reminders" not in sys.argv:
         threading.Thread(target=reminder_loop, daemon=True).start()
+        threading.Thread(target=late_notice_loop, daemon=True).start()
     log(f"listening on {host}:{port}")
     print(f"Manager server on http://{host}:{port}", flush=True)
     httpd.serve_forever()
