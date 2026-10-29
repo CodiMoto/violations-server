@@ -139,6 +139,8 @@
     "email_me": null,
     "email_writer": false,
     "moornings": false,
+    "daily_to": null,
+    "daily_hour": 23,
     "gmail_token": null,
     "send_from_hour": 7,
     "send_until_hour": 20,
@@ -147,6 +149,10 @@
   "server": {
     "port": 8790
   },
+  "park_copies": {},
+  "_park_copies_help": "Park name -> addresses. Every real violation issued for that park is also emailed (notice attached). Needs reminders.gmail_token.",
+  "park_locations": {},
+  "_park_locations_help": "Park name -> [latitude, longitude]. With two or more parks on a computer, the phone's GPS picks the nearest one.",
   "parks": [],
   "_short_help": "short = the tile text on the phone; label = the full wording printed on the notice.",
   "_parks_help": "Which parks this computer handles (ticked in Violations Settings). A manager with two parks gets a park choice on the lot screen.",

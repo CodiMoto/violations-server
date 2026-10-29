@@ -170,8 +170,9 @@ def lots(conn, max_age_s=3600):
                              "tenants": [{"id": t["TenantID"], "name": t["Name"]} for t in ts]})
         lot_rows.sort(key=lambda r: (int(re.sub(r"\D", "", r["lot"]) or 0), r["lot"]))
         phone = ((p.get("PhoneNumbers") or [{}])[0]).get("PhoneNumber", "")
+        loc = (load_config().get("park_locations") or {}).get(p["ShortName"].strip())
         out.append({"property_id": p["PropertyID"], "park": p["ShortName"],
-                    "phone": phone, "lots": lot_rows})
+                    "phone": phone, "loc": loc, "lots": lot_rows})
     with _lock:
         _lots_cache.update(at=datetime.now(), data=out)
     return out
@@ -303,16 +304,9 @@ def render_pdf(v, cfg=None, with_photos=True):
             pdf.line(x + size - 1, y + 1, x + 1, y + size - 1)
         pdf.set_line_width(0.2)
 
-    # Violation Number: Reminder / 1 / 2 / Final
+    # No "Violation Number" (Reminder / 1 / 2 / Final) line: it confused people
+    # (Codi, 2026-10-29). The level is still kept in the Rent Manager note.
     y = pdf.get_y()
-    pdf.set_font("Helvetica", "", 12)
-    pdf.set_xy(L, y); pdf.cell(38, 6, "Violation Number:")
-    x = L + 40
-    for lvl in cfg["warning_levels"]:
-        box(x, y + 0.3, v["warning"] == lvl)
-        pdf.set_xy(x + 7, y); pdf.cell(22, 6, lvl)
-        x += 7 + pdf.get_string_width(lvl) + 8
-    y += 13
 
     # two-column checklist, same split as the paper form
     items = cfg["items"]
@@ -494,8 +488,26 @@ def issue(conn, v, progress=None):
         log.append(record)
         _write(LOG, log)
     _active_cache["data"] = None          # the home list should show it at once
+    if not test:
+        record["copied_to"] = email_copies(v, pdf, cfg)
     say("Done.")
     return record
+
+
+def email_copies(v, pdf, cfg):
+    """Email the notice to the park's copy list (config park_copies). Never
+    stops a violation from being issued if the email fails."""
+    import notify
+    out = []
+    for addr in (cfg.get("park_copies") or {}).get(v["park"], []):
+        try:
+            subj = f"Violation notice - {v['park']} lot {v['lot']} - {v['tenant_name']} ({v['issued']:%m/%d/%Y})"
+            body = (f"{v['issued_by']} issued a violation notice.\n\n{v['park']} lot {v['lot']} - {v['tenant_name']}\n"
+                    f"{note_text(v)}\n\nThe notice is attached. It is also saved in the tenant's History & Notes in Rent Manager.")
+            out.append(notify.send(addr, subj, body, [(f"Violation notice {v['park']} lot {v['lot']} {v['issued']:%Y-%m-%d}.pdf", pdf)]))
+        except Exception as e:
+            out.append({"ok": False, "to": addr, "error": str(e)[:300]})
+    return out
 
 
 # ---- printing -----------------------------------------------------------------
@@ -740,6 +752,62 @@ def remind(conn, send=True, today=None):
                 _write(REMINDED, rem)
         done.append(result)
     return {"reminders": done}
+
+
+DAILY = os.path.join(DATA, "daily_digest.json")
+
+
+def daily_digest(now=None, send=True, max_mb=20):
+    """Once a day from reminders.daily_hour (11pm) on: one email to
+    reminders.daily_to with every real violation issued today, all notices
+    attached. Nothing issued = no email. Marked sent per day, so a restart or
+    the next check never sends it twice. Turned on only where daily_to is set
+    (Codi's computer)."""
+    import notify
+    now = now or datetime.now()
+    rcfg = load_config().get("reminders") or {}
+    to = rcfg.get("daily_to")
+    today = now.date().isoformat()
+    if not to or not notify.configured() or now.hour < rcfg.get("daily_hour", 23):
+        return {"skipped": "not due"}
+    with _lock:
+        if _read(DAILY, {}).get("last") == today:
+            return {"skipped": "already sent today"}
+    todays = [r for r in _read(LOG, []) if not r.get("test")
+              and (r.get("saved_at") or "")[:10] == today and r.get("pdf")]
+    files = []
+    for r in todays:
+        p = r["pdf"] if os.path.isabs(r["pdf"]) else os.path.join(DATA, "letters", os.path.basename(r["pdf"]))
+        if not os.path.exists(p):
+            p = os.path.join(DATA, "letters", f"{r['ref']}.pdf")
+        if os.path.exists(p):
+            name = f"{r['park']} lot {r['lot']} - {r['tenant_name']} ({r['ref']}).pdf"
+            with open(p, "rb") as fh:
+                files.append((r, name, fh.read()))
+    result = {"count": len(todays), "emails": []}
+    if todays and send:
+        parts, cur, size = [], [], 0
+        for item in files:                      # Gmail caps a message near 25 MB
+            if cur and size + len(item[2]) > max_mb * 1024 * 1024:
+                parts.append(cur); cur, size = [], 0
+            cur.append(item); size += len(item[2])
+        parts.append(cur)
+        for n, part in enumerate(parts, 1):
+            lines = [f"{r['park']} lot {r['lot']} - {r['tenant_name']} - {r['warning']} warning - "
+                     f"issued by {r['issued_by']}, correct by {r['correct_by'][:10]}"
+                     for r, _, _ in part] if parts else []
+            subject = (f"Violations issued {now:%a %m/%d} - {len(todays)} notice{'s' if len(todays) != 1 else ''}"
+                       + (f" (email {n} of {len(parts)})" if len(parts) > 1 else ""))
+            body = (f"Everything issued today, {len(todays)} in all"
+                    + (f" - this is email {n} of {len(parts)}" if len(parts) > 1 else "")
+                    + ".\nThe notices are attached.\n\n" + "\n".join(lines) + "\n")
+            result["emails"].append(notify.send(to, subject, body, [(nm, data) for _, nm, data in part]))
+        if not all(e.get("ok") for e in result["emails"]):
+            return result                       # not marked, so the next check tries again
+    if send:
+        with _lock:
+            _write(DAILY, {"last": today, "count": len(todays)})
+    return result
 
 
 def add_moornings_item(d):

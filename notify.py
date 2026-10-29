@@ -30,7 +30,8 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 def allowed():
     import violations
     cfg = violations.load_config()
-    return {cfg["reminders"]["email_me"].lower()} | \
+    copies = {a.lower() for addrs in (cfg.get("park_copies") or {}).values() for a in addrs}
+    return {cfg["reminders"]["email_me"].lower()} | copies | \
         {u["email"].lower() for u in cfg["users"] if u.get("email")}
 
 

@@ -580,12 +580,37 @@ $("circleNext").onclick = () => {
 // ---- step 3: lot, typed on a keypad ---------------------------------------------
 let digits = "", lotPick = null, tenantPick = null;
 
+// The phone's GPS picks the park: the nearest park (the server sends each park's
+// city position) within 60 km. Location never leaves the phone. Anything
+// goes wrong (refused, no signal, too far from every park) → the buttons below.
+function nearestPark() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const {latitude: la, longitude: lo} = pos.coords, rad = Math.PI / 180;
+      let best = null, bestKm = 60;
+      for (const p of parks) {
+        if (!p.loc) continue;
+        const a = Math.sin((p.loc[0] - la) * rad / 2) ** 2 +
+                  Math.cos(la * rad) * Math.cos(p.loc[0] * rad) * Math.sin((p.loc[1] - lo) * rad / 2) ** 2;
+        const km = 12742 * Math.asin(Math.sqrt(a));
+        if (km < bestKm) { best = p; bestKm = km; }
+      }
+      resolve(best);
+    }, () => resolve(null), {timeout: 6000, maximumAge: 300000});
+  });
+}
+
 async function stepLot() {
   cur.stage = "lot";
   show("s-lot");
   if (!parks.length) { $("lotWho").textContent = "Loading the lots…"; await loadParks(); }
   if (!parks.length) { $("lotWho").textContent = "Couldn't reach the manager computer — try again."; return; }
   if (cur.lot) park = parks.find((p) => p.property_id === cur.lot.property_id) || park;
+  else if (parks.length > 1 && parks.some((p) => p.loc)) {      // no positions set = never ask for location
+    $("lotWho").textContent = "Finding your park…";
+    park = (await nearestPark()) || park;
+  }
   if (!park || !parks.includes(park)) park = parks[0];
   digits = cur.lot ? lotName(cur.lot.lot) : ""; lotPick = null; tenantPick = null;
   // Two or more parks on this computer: a row of park buttons above the keypad.

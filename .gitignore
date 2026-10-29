@@ -10,3 +10,4 @@ venv/
 tools/
 __pycache__/
 *.pyc
+venv.laptop/

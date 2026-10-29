@@ -399,6 +399,26 @@ def late_notice_loop():
         time.sleep(wait)
 
 
+def digest_loop():
+    """Each minute: is it time for the day's violations email? (Only does
+    anything where reminders.daily_to is set; tries again every 10 minutes if
+    sending failed.)"""
+    time.sleep(30)
+    last_try = 0
+    while True:
+        try:
+            if time.time() - last_try >= 600 or datetime.now().minute == 0:
+                r = V.daily_digest()
+                if r.get("emails"):
+                    last_try = time.time()
+                    log(f"daily violations email: {r['count']} notice(s), "
+                        f"{'sent' if all(e.get('ok') for e in r['emails']) else 'FAILED, will retry'}")
+        except Exception:
+            last_try = time.time()
+            log("daily email failed\n" + traceback.format_exc())
+        time.sleep(60)
+
+
 def main():
     cfg = V.load_config()
     port = cfg["server"]["port"]
@@ -414,6 +434,7 @@ def main():
     if "--no-reminders" not in sys.argv:
         threading.Thread(target=reminder_loop, daemon=True).start()
         threading.Thread(target=late_notice_loop, daemon=True).start()
+        threading.Thread(target=digest_loop, daemon=True).start()
     log(f"listening on {host}:{port}")
     print(f"Manager server on http://{host}:{port}", flush=True)
     httpd.serve_forever()
