@@ -378,7 +378,7 @@ def reminder_loop():
         try:
             r = V.remind(rmconn.Connection("practice"))
             if r.get("reminders"):
-                log(f"sent {len(r['reminders'])} reminder(s)")
+                log(f"sent {len(r['reminders'])} park checklist(s) covering {r['violations']} violation(s)")
         except Exception:
             log("reminder check failed\n" + traceback.format_exc())
         time.sleep(1800)

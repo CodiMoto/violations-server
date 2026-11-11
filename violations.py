@@ -710,48 +710,108 @@ def due_violations(conn, today=None, lookback_days=200):
     return out
 
 
-def remind(conn, send=True, today=None):
-    """Send every reminder that's due: email to Codi, email to whoever wrote
-    it, and a line on Moornings' list. Marks each so it's sent once."""
+def _what(note):
+    """The "what's wrong" line of a violation note (the line after "<park> lot <n> - <name>")."""
+    lines = (note or "").splitlines()
+    for i, ln in enumerate(lines):
+        if re.match(r"^.+? lot \S+ - .+$", ln) and i + 1 < len(lines):
+            nxt = lines[i + 1].strip()
+            return "" if nxt.startswith(("Notes:", "Correct by:")) else nxt
+    return ""
+
+
+def _lot_key(d):
+    m = re.match(r"(\d+)(.*)", str(d.get("lot") or ""))
+    return (0, int(m.group(1)), m.group(2)) if m else (1, 0, str(d.get("lot") or ""))
+
+
+def checklist_email(park, items, today, test=False):
+    """One email for one park: every lot to re-check today, as a tick list."""
+    items = sorted(items, key=_lot_key)
+    n = len(items)
+    subject = (("[TEST] " if test else "") +
+               f"Violation re-checks: {park} - {n} lot{'s' if n != 1 else ''} today ({today:%a %m/%d})")
+    lines = [f"{park}: {n} violation{'s' if n != 1 else ''} to go and look at today.",
+             "If it's fixed, tap \"It's fixed\" in the phone app. If not, issue the next "
+             "notice from the phone app (it will suggest the next warning level).", ""]
+    for d in items:
+        late = (today - d["correct_by"]).days
+        due = (f"due {d['correct_by']:%a %m/%d}" +
+               (f", {late} day{'s' if late != 1 else ''} late" if late > 0 else ""))
+        what = _what(d.get("note"))
+        lines.append(f"[ ] Lot {d.get('lot')} - {d.get('tenant_name')}" + (f" - {what}" if what else "")
+                     + f" ({due})")
+    lines += ["", "The notices are attached." if any(d.get("_pdf") for d in items) else ""]
+    return subject, "\n".join(lines).rstrip() + "\n"
+
+
+def remind(conn, send=True, today=None, max_mb=20):
+    """Send every reminder that's due, grouped by park: ONE checklist email per
+    park (to Codi, and to each writer with just their own lots) and one line per
+    park on Moornings' list - not one email per violation (Codi, 2026-11-11:
+    20+ separate emails a day for Freeburg). Marks each violation so it's sent once."""
     import notify
     cfg = load_config()
     rcfg = cfg["reminders"]
+    today = today or date.today()
     hour = datetime.now().hour
     if send and not (rcfg["send_from_hour"] <= hour < rcfg["send_until_hour"]):
         return {"skipped": "outside reminder hours"}
     log = {x["ref"]: x for x in _read(LOG, []) if x.get("ref")}
     users = {u["name"]: u for u in cfg["users"]}
-    done = []
-    for d in due_violations(conn, today=today):
-        issued = log.get(d.get("ref"), {})
+    due = due_violations(conn, today=today)
+    for d in due:
+        pdf = log.get(d.get("ref"), {}).get("pdf")
+        d["_pdf"] = pdf if pdf and os.path.exists(pdf) else None
+
+    # (park, test) -> recipient -> violations. Test ones never mix with real ones.
+    groups = {}
+    for d in due:
         to = {rcfg["email_me"]}
         writer = users.get(d.get("issued_by"))
         if rcfg.get("email_writer") and writer and writer.get("email"):
             to.add(writer["email"])
-        subject = (("[TEST] " if d["test"] else "") +
-                   f"Violation deadline: {d.get('park')} lot {d.get('lot')} — "
-                   f"re-check today ({d['correct_by']:%a %m/%d})")
-        body = (f"The violation notice for {d.get('tenant_name')} at {d.get('park')} lot "
-                f"{d.get('lot')} said to correct it by {d['correct_by']:%A, %B %d}.\n\n"
-                f"Time to go and look. If it's fixed, nothing else to do. If not, issue the "
-                f"next notice from the phone app (it will suggest the next warning level).\n\n"
-                f"What the notice said:\n{d['note']}\n")
-        attach = [(os.path.basename(issued["pdf"]), open(issued["pdf"], "rb").read())] \
-            if issued.get("pdf") and os.path.exists(issued["pdf"]) else []
-        result = {"history_id": d["history_id"], "to": sorted(to), "subject": subject}
-        if send:
+        for addr in to:
+            groups.setdefault((d.get("park") or "Unknown park", d["test"]), {}) \
+                  .setdefault(addr, []).append(d)
+
+    done = []
+    for (park, test), by_addr in sorted(groups.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        park_items = by_addr.get(rcfg["email_me"]) or []
+        result = {"park": park, "test": test, "count": len(park_items),
+                  "history_ids": [d["history_id"] for d in park_items], "emails": []}
+        if send and rcfg.get("email") and notify.configured():
             # Manager computers have no email set up (Codi, 2026-09-24): the
             # phone app's home screen shows the overdue ones instead.
-            if rcfg.get("email") and notify.configured():
-                result["email"] = [notify.send(addr, subject, body, attach) for addr in sorted(to)]
-            if rcfg.get("moornings"):
-                add_moornings_item(d)
+            for addr in sorted(by_addr):
+                items = by_addr[addr]
+                files = []
+                for d in sorted(items, key=_lot_key):
+                    if d["_pdf"]:
+                        with open(d["_pdf"], "rb") as fh:
+                            files.append((f"{park} lot {d.get('lot')} - {d.get('tenant_name')}.pdf", fh.read()))
+                parts, cur, size = [], [], 0          # Gmail caps a message near 25 MB
+                for f in files:
+                    if cur and size + len(f[1]) > max_mb * 1024 * 1024:
+                        parts.append(cur); cur, size = [], 0
+                    cur.append(f); size += len(f[1])
+                parts.append(cur)
+                subject, body = checklist_email(park, items, today, test)
+                for n, part in enumerate(parts, 1):
+                    s = subject + (f" (email {n} of {len(parts)})" if len(parts) > 1 else "")
+                    result["emails"].append(notify.send(addr, s, body if n == 1 else
+                                                        "More of the notices for the checklist in email 1.\n", part))
+        if send:
+            if rcfg.get("moornings") and park_items:
+                add_moornings_park(park, park_items, today, test)
             with _lock:
                 rem = _read(REMINDED, {})
-                rem[str(d["history_id"])] = datetime.now().isoformat(timespec="seconds")
+                for d in due:
+                    if (d.get("park") or "Unknown park") == park and d["test"] == test:
+                        rem[str(d["history_id"])] = datetime.now().isoformat(timespec="seconds")
                 _write(REMINDED, rem)
         done.append(result)
-    return {"reminders": done}
+    return {"reminders": done, "violations": len(due)}
 
 
 DAILY = os.path.join(DATA, "daily_digest.json")
@@ -810,19 +870,26 @@ def daily_digest(now=None, send=True, max_mb=20):
     return result
 
 
-def add_moornings_item(d):
-    """Queue a line for Moornings' "My own list". Moornings picks these up
-    itself (Api.lists) so its own save can never race with this file. Only on
-    Codi's computer (reminders.moornings in violations_config.json)."""
+def add_moornings_park(park, items, today, test=False):
+    """One line per park per day on Moornings' "My own list" (not one per violation).
+    Moornings picks these up itself (Api.lists) so its own save can never race
+    with this file. Only on Codi's computer (reminders.moornings)."""
     with _lock:
-        items = _read(MOORNINGS_INBOX, [])
-        iid = f"viol-{d['history_id']}"
-        if not any(i["id"] == iid for i in items):
-            items.append({"id": iid,
-                          "text": (("[TEST] " if d.get("test") else "") +
-                                   f"Re-check {d.get('park')} lot {d.get('lot')} violation "
-                                   f"(due {d['correct_by']:%m/%d})"),
-                          "note": f"{d.get('tenant_name')} — notice from Rent Manager tools",
-                          "added_at": datetime.now().astimezone().isoformat(),
-                          "delivered": False})
-            _write(MOORNINGS_INBOX, items)
+        q = _read(MOORNINGS_INBOX, [])
+        iid = f"viol-{'test-' if test else ''}{park}-{today.isoformat()}"
+        old = next((i for i in q if i["id"] == iid), None)
+        lots = [[str(d.get("lot")), d.get("tenant_name") or ""] for d in sorted(items, key=_lot_key)]
+        if old and not old.get("delivered"):    # same day, not picked up yet: add to it
+            have = {tuple(x) for x in old.get("lots", [])}
+            lots = old.get("lots", []) + [x for x in lots if tuple(x) not in have]
+            lots.sort(key=lambda x: _lot_key({"lot": x[0]}))
+            item = old
+        else:
+            item = {"id": iid if not old else f"{iid}-{datetime.now():%H%M}",
+                    "added_at": datetime.now().astimezone().isoformat(), "delivered": False}
+            q.append(item)
+        item.update(lots=lots,
+                    text=(("[TEST] " if test else "") + f"Re-check {len(lots)} {park} violation"
+                          f"{'s' if len(lots) != 1 else ''} (lots {', '.join(x[0] for x in lots)})"),
+                    note="; ".join(f"lot {l} {n}" for l, n in lots))
+        _write(MOORNINGS_INBOX, q)

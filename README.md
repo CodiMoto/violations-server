@@ -97,7 +97,7 @@ A push to `main` **is** a release to every park. So:
 | `updater.py` | hourly self-update from GitHub, with rollback |
 | `VERSION` | this release's number, shown on the phone and in Settings |
 | `mgrserver.py` | the phone server |
-| `violations.py` | notice, deadlines, Rent Manager notes, reminders |
+| `violations.py` | notice, deadlines, Rent Manager notes, reminders (one checklist email per park) |
 | `inbox.py` | the phone's one-shot sends: received once (phone's own id), Rent Manager in the background |
 | `drafts.py` | puts a received violation's photo, circle and lot together |
 | `settings_app.py` | Violations Settings page |
